@@ -1,0 +1,11 @@
+<resources>
+    <color name="coolapk_green">#0DAE62</color>
+    <color name="coolapk_green_dark">#088247</color>
+    <color name="coolapk_green_light">#40C782</color>
+    <color name="wear_background">#000000</color>
+    <color name="wear_surface">#1C1C1E</color>
+    <color name="wear_surface_variant">#2C2C2E</color>
+    <color name="wear_on_surface">#FFFFFF</color>
+    <color name="wear_on_surface_secondary">#9E9EA2</color>
+    <color name="ic_launcher_background">#0DAE62</color>
+</resources>

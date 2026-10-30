@@ -1,0 +1,100 @@
+name: Build and Release WristCool
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release Version Tag (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x gradlew
+
+      - name: Build Wear & Phone Release APKs
+        run: |
+          ./gradlew :app:assembleRelease :phone:assembleRelease --stacktrace
+
+      - name: Prepare Release Artifacts
+        id: prepare_artifacts
+        run: |
+          mkdir -p release_apks
+          VERSION_TAG="${{ github.ref_name }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION_TAG="${{ github.event.inputs.version }}"
+          fi
+          if [[ "$VERSION_TAG" != v* ]]; then
+            VERSION_TAG="v1.0.0"
+          fi
+          echo "tag_name=$VERSION_TAG" >> $GITHUB_OUTPUT
+
+          cp app/build/outputs/apk/release/app-release.apk release_apks/WristCool-wear-${VERSION_TAG}.apk
+          cp phone/build/outputs/apk/release/phone-release.apk release_apks/WristCool-phone-companion-${VERSION_TAG}.apk
+
+          echo "Generated APKs:"
+          ls -lh release_apks/
+
+      - name: Upload Artifacts to Workflow Run
+        uses: actions/upload-artifact@v4
+        with:
+          name: WristCool-APKs
+          path: release_apks/*
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prepare_artifacts.outputs.tag_name }}
+          name: WristCool ${{ steps.prepare_artifacts.outputs.tag_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          body: |
+            ## 🎉 WristCool 腕酷 首发版本发布 (${{ steps.prepare_artifacts.outputs.tag_name }})
+
+            专为 Wear OS 智能手表与圆形表盘深度打造的第三方酷安客户端，兼具独立运行与手机伴侣端协同。
+
+            ### 📦 本次发布包含的安装包：
+            - ⌚ **手表端 (`WristCool-wear-*.apk`)**: 安装于 Wear OS 智能手表（如三星 Galaxy Watch 4/5/6/7 等 Android 11+ 手表设备），支持物理表圈旋转、独立联网浏览、全量楼中楼展开、莫奈动态取色。
+            - 📱 **手机伴侣端 (`WristCool-phone-companion-*.apk`)**: 安装于普通 Android 手机，支持快速扫码登录、中继同步酷安账号凭据至手表端。
+
+            ### ✨ 核心功能与亮点：
+            - **沉浸式圆屏设计**：基于 Jetpack Compose for Wear OS 与 Google Horologist 沉浸式流线型弧度布局。
+            - **物理旋转表圈与触控表冠驱动**：硬件级精准捕捉旋转事件，搭配原生线性马达阻尼震动反馈。
+            - **动态莫奈自适应取色**：完美提取 Android 12+ / One UI Watch 系统强调色，支持酷安经典绿与系统调色板实时切换。
+            - **完整酷安浏览体验**：头条/热榜/关注/酷图频道切换、自适应紧凑多图九宫格、话题胶囊。
+            - **全量楼中楼二级回复**：点击展开即可原地分页拉取并看完全部数十/数百条评论回复，支持评论区动图 GIF 播放与双指缩放大图。
+            - **手机扫码跨屏查看**：手表端一键生成动态网页二维码，手机扫一扫立即跳转。
+            - **账号与个性化**：个人主页（动态/关注/粉丝）、收藏夹批量多选管理、浏览历史记录与离线缓存。
+          files: |
+            release_apks/WristCool-wear-*.apk
+            release_apks/WristCool-phone-companion-*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

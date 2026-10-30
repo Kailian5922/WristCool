@@ -1,0 +1,33 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+*.ap_
+output.json
+
+# Built application files
+**/build/
+**/bin/
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services
+google-services.json
+
+# Android Studio Navigation editor temp files
+.navigation/
+
+# Log Files
+*.log
+
+# Kotlin temp files
+.kotlin/
