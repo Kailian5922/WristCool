@@ -12,7 +12,7 @@ import com.coolapk.wear.presentation.theme.ThemeManager
 /**
  * WristCool 应用入口。
  * 1. 持有全局唯一 AppContainer 单例；
- * 2. 实现 ImageLoaderFactory，避免每次 Activity 重建都重复创建 Coil ImageLoader 与 OkHttpClient。
+ * 2. 实现 ImageLoaderFactory，自动为酷安接口域图片附加请求头与登录态。
  */
 class WristCoolApplication : Application(), ImageLoaderFactory {
 
@@ -22,16 +22,23 @@ class WristCoolApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        ThemeManager.init(this)
+        ThemeManager.init(this, container.settingsRepository)
     }
 
     override fun newImageLoader(): ImageLoader {
         val imageClient = container.okHttpClient.newBuilder()
             .addInterceptor { chain ->
-                val req = chain.request().newBuilder()
+                val original = chain.request()
+                val reqBuilder = original.newBuilder()
                     .header("User-Agent", container.deviceProfile.userAgent)
-                    .build()
-                chain.proceed(req)
+                val host = original.url.host
+                if (host.equals("api.coolapk.com", ignoreCase = true) || host.endsWith(".coolapk.com", ignoreCase = true)) {
+                    val creds = container.authRepository.credentials.value
+                    if (creds.isLoggedIn && original.header("Cookie").isNullOrBlank()) {
+                        reqBuilder.header("Cookie", creds.cookie)
+                    }
+                }
+                chain.proceed(reqBuilder.build())
             }
             .build()
 

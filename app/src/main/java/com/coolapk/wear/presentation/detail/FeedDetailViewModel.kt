@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.coolapk.wear.data.api.CoolapkApi
 import com.coolapk.wear.data.model.CommentItem
 import com.coolapk.wear.data.model.FeedItem
+import com.coolapk.wear.data.repository.BlacklistRepository
 import com.coolapk.wear.data.repository.BrowsingHistoryRepository
 import com.coolapk.wear.data.repository.FeedUpdateBus
+import com.coolapk.wear.data.repository.SettingsRepository
 import com.coolapk.wear.presentation.components.SubReplyUiState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -21,11 +23,17 @@ enum class CommentSort(val key: String, val label: String) {
     DEFAULT("", "默认"),
     POPULAR("popular", "热门"),
     LATEST("dateline_desc", "最新"),
-    AUTHOR("author", "楼主")
+    AUTHOR("author", "楼主");
+
+    companion object {
+        fun fromKey(key: String?): CommentSort =
+            entries.firstOrNull { it.key == key } ?: DEFAULT
+    }
 }
 
 data class FeedDetailUiState(
     val feed: FeedItem? = null,
+    val rawComments: List<CommentItem> = emptyList(),
     val comments: List<CommentItem> = emptyList(),
     val subReplyStates: Map<String, SubReplyUiState> = emptyMap(),
     val isLoading: Boolean = false,
@@ -37,11 +45,15 @@ data class FeedDetailUiState(
     val isTogglingLike: Boolean = false,
     val isTogglingFavorite: Boolean = false,
     val isSubmittingReply: Boolean = false,
+    val isForwarding: Boolean = false,
+    val isDeletingFeed: Boolean = false,
+    val isVoting: Boolean = false,
     val commentSort: CommentSort = CommentSort.DEFAULT,
     val commentPage: Int = 1,
     val isLoadingMoreComments: Boolean = false,
     val hasMoreComments: Boolean = true,
-    val actionMessage: String? = null
+    val actionMessage: String? = null,
+    val currentUid: String = ""
 )
 
 class FeedDetailViewModel(
@@ -49,8 +61,12 @@ class FeedDetailViewModel(
     private val feedId: String,
     initialFeed: FeedItem? = null,
     private val browsingHistoryRepository: BrowsingHistoryRepository? = null,
-    private val feedUpdateBus: FeedUpdateBus? = null
+    private val feedUpdateBus: FeedUpdateBus? = null,
+    private val blacklistRepository: BlacklistRepository? = null,
+    private val settingsRepository: SettingsRepository? = null
 ) : ViewModel() {
+
+    private val defaultSort = CommentSort.fromKey(settingsRepository?.settings?.value?.defaultCommentSort)
 
     private val _uiState = MutableStateFlow(
         FeedDetailUiState(
@@ -58,7 +74,9 @@ class FeedDetailViewModel(
             isLiked = initialFeed?.isLiked ?: false,
             likeCount = initialFeed?.likeNum ?: 0,
             isFavorite = initialFeed?.isFavorite ?: false,
-            isLoading = initialFeed == null
+            isLoading = initialFeed == null,
+            commentSort = defaultSort,
+            currentUid = api.currentUid
         )
     )
     val uiState: StateFlow<FeedDetailUiState> = _uiState.asStateFlow()
@@ -68,11 +86,26 @@ class FeedDetailViewModel(
     private val subReplyJobs = mutableMapOf<String, Job>()
 
     init {
-        if (initialFeed != null) {
+        if (initialFeed != null && shouldRecordHistory()) {
             browsingHistoryRepository?.recordView(initialFeed)
+        }
+        if (blacklistRepository != null) {
+            viewModelScope.launch {
+                blacklistRepository.state.collect {
+                    _uiState.update { state ->
+                        state.copy(comments = applyCommentBlacklist(state.rawComments))
+                    }
+                }
+            }
         }
         loadDetail()
     }
+
+    private fun shouldRecordHistory(): Boolean =
+        settingsRepository?.settings?.value?.recordHistory ?: true
+
+    private fun applyCommentBlacklist(list: List<CommentItem>): List<CommentItem> =
+        blacklistRepository?.filterComments(list) ?: list
 
     fun loadDetail() {
         detailJob?.cancel()
@@ -82,7 +115,8 @@ class FeedDetailViewModel(
                 state.copy(
                     isLoading = state.feed == null,
                     isLoadingComments = state.comments.isEmpty(),
-                    error = null
+                    error = null,
+                    currentUid = api.currentUid
                 )
             }
 
@@ -93,17 +127,20 @@ class FeedDetailViewModel(
                 detailDeferred.await() to commentsDeferred.await()
             }
 
-            val comments = commentsResult.getOrDefault(emptyList()).distinctBy { it.id }
+            val rawComments = commentsResult.getOrDefault(emptyList()).distinctBy { it.id }
 
             detailResult.onSuccess { item ->
-                browsingHistoryRepository?.recordView(item)
+                if (shouldRecordHistory()) {
+                    browsingHistoryRepository?.recordView(item)
+                }
                 feedUpdateBus?.publish(item)
                 _uiState.update { state ->
                     state.copy(
                         feed = item,
-                        comments = comments,
+                        rawComments = rawComments,
+                        comments = applyCommentBlacklist(rawComments),
                         commentPage = 1,
-                        hasMoreComments = comments.size >= COMMENT_PAGE_MIN_FOR_MORE,
+                        hasMoreComments = rawComments.size >= COMMENT_PAGE_MIN_FOR_MORE,
                         isLiked = item.isLiked,
                         likeCount = item.likeNum,
                         isFavorite = item.isFavorite,
@@ -116,9 +153,10 @@ class FeedDetailViewModel(
                 _uiState.update { state ->
                     if (state.feed != null) {
                         state.copy(
-                            comments = comments,
+                            rawComments = rawComments,
+                            comments = applyCommentBlacklist(rawComments),
                             commentPage = 1,
-                            hasMoreComments = comments.size >= COMMENT_PAGE_MIN_FOR_MORE,
+                            hasMoreComments = rawComments.size >= COMMENT_PAGE_MIN_FOR_MORE,
                             isLoading = false,
                             isLoadingComments = false,
                             error = null
@@ -141,6 +179,7 @@ class FeedDetailViewModel(
         _uiState.update {
             it.copy(
                 commentSort = sort,
+                rawComments = emptyList(),
                 comments = emptyList(),
                 subReplyStates = emptyMap(),
                 commentPage = 1,
@@ -172,19 +211,19 @@ class FeedDetailViewModel(
             }
 
             val result = api.getFeedReplies(feedId, page, sort.key)
-            // 如果请求返回时排序已切换，忽略过期响应
             if (_uiState.value.commentSort != sort) return@launch
 
             result.onSuccess { newComments ->
                 _uiState.update { state ->
-                    val combined = if (replace) {
+                    val combinedRaw = if (replace) {
                         newComments.distinctBy { it.id }
                     } else {
-                        (state.comments + newComments).distinctBy { it.id }
+                        (state.rawComments + newComments).distinctBy { it.id }
                     }
-                    val addedNew = replace || combined.size > state.comments.size
+                    val addedNew = replace || combinedRaw.size > state.rawComments.size
                     state.copy(
-                        comments = combined,
+                        rawComments = combinedRaw,
+                        comments = applyCommentBlacklist(combinedRaw),
                         commentPage = page,
                         isLoadingComments = false,
                         isLoadingMoreComments = false,
@@ -328,6 +367,31 @@ class FeedDetailViewModel(
         }
     }
 
+    /**
+     * 点赞或取消点赞单条评论（乐观更新 + 失败回滚）。
+     */
+    fun toggleCommentLike(comment: CommentItem) {
+        val newLiked = !comment.isLiked
+        val newCount = if (newLiked) comment.likeNum + 1 else (comment.likeNum - 1).coerceAtLeast(0)
+
+        fun updateCommentInList(targetId: String, liked: Boolean, count: Int) {
+            _uiState.update { state ->
+                val nextRaw = state.rawComments.map { c ->
+                    if (c.id == targetId) c.copy(isLiked = liked, likeNum = count) else c
+                }
+                state.copy(rawComments = nextRaw, comments = applyCommentBlacklist(nextRaw))
+            }
+        }
+
+        updateCommentInList(comment.id, newLiked, newCount)
+        viewModelScope.launch {
+            api.toggleReplyLike(comment.id, like = newLiked).onFailure { err ->
+                updateCommentInList(comment.id, comment.isLiked, comment.likeNum)
+                _uiState.update { it.copy(actionMessage = err.message ?: "评论点赞失败，请先登录") }
+            }
+        }
+    }
+
     fun toggleFavorite() {
         val snapshot = _uiState.value
         if (snapshot.isTogglingFavorite) return
@@ -362,7 +426,11 @@ class FeedDetailViewModel(
         }
     }
 
-    fun submitReply(message: String, onComplete: (Boolean, String) -> Unit) {
+    fun submitReply(
+        message: String,
+        replyId: String? = null,
+        onComplete: (Boolean, String) -> Unit
+    ) {
         val trimmed = message.trim()
         if (trimmed.isEmpty()) {
             onComplete(false, "回复内容不能为空")
@@ -372,7 +440,7 @@ class FeedDetailViewModel(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingReply = true) }
-            val result = api.replyFeed(feedId, trimmed)
+            val result = api.replyFeed(feedId, trimmed, replyId = replyId)
             _uiState.update { it.copy(isSubmittingReply = false) }
 
             result.onSuccess { msg ->
@@ -387,6 +455,107 @@ class FeedDetailViewModel(
                 onComplete(false, err.message ?: "回复失败，请检查网络或登录状态")
             }
         }
+    }
+
+    fun forwardFeed(message: String, onComplete: (Boolean, String) -> Unit) {
+        if (_uiState.value.isForwarding) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isForwarding = true) }
+            val result = api.forwardFeed(feedId, message.trim().ifBlank { "转发动态" })
+            _uiState.update { it.copy(isForwarding = false) }
+            result.onSuccess { msg ->
+                _uiState.update { state ->
+                    val updated = state.feed?.copy(forwardNum = state.feed.forwardNum + 1)
+                    updated?.let { publishFeedUpdate(it) }
+                    state.copy(feed = updated)
+                }
+                feedUpdateBus?.publishFeedCreated()
+                onComplete(true, msg)
+            }.onFailure { err ->
+                onComplete(false, err.message ?: "转发失败，请检查登录状态")
+            }
+        }
+    }
+
+    fun deleteFeed(onDeleted: () -> Unit) {
+        if (_uiState.value.isDeletingFeed) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeletingFeed = true) }
+            api.deleteFeed(feedId).onSuccess {
+                _uiState.update { it.copy(isDeletingFeed = false, actionMessage = "动态已删除") }
+                feedUpdateBus?.publishDeleted(feedId)
+                browsingHistoryRepository?.removeItem(feedId)
+                onDeleted()
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isDeletingFeed = false,
+                        actionMessage = err.message ?: "删除动态失败"
+                    )
+                }
+            }
+        }
+    }
+
+    fun deleteComment(comment: CommentItem) {
+        viewModelScope.launch {
+            api.deleteReply(comment.id).onSuccess {
+                _uiState.update { state ->
+                    val nextRaw = state.rawComments.filterNot { it.id == comment.id }
+                    val updatedFeed = state.feed?.copy(replyNum = (state.feed.replyNum - 1).coerceAtLeast(0))
+                    updatedFeed?.let { publishFeedUpdate(it) }
+                    state.copy(
+                        feed = updatedFeed,
+                        rawComments = nextRaw,
+                        comments = applyCommentBlacklist(nextRaw),
+                        actionMessage = "评论已删除"
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionMessage = err.message ?: "删除评论失败") }
+            }
+        }
+    }
+
+    fun submitVote(optionIds: List<String>) {
+        if (_uiState.value.isVoting || optionIds.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isVoting = true) }
+            api.submitVote(feedId, optionIds).onSuccess {
+                _uiState.update { state ->
+                    val currentVote = state.feed?.vote
+                    val updatedVote = currentVote?.copy(
+                        isVoted = true,
+                        selectedOptionIds = optionIds,
+                        totalVoteNum = currentVote.totalVoteNum + 1,
+                        options = currentVote.options.map { opt ->
+                            if (opt.id in optionIds) opt.copy(voteNum = opt.voteNum + 1) else opt
+                        }
+                    )
+                    val updatedFeed = state.feed?.copy(vote = updatedVote)
+                    updatedFeed?.let { publishFeedUpdate(it) }
+                    state.copy(
+                        feed = updatedFeed,
+                        isVoting = false,
+                        actionMessage = "投票成功"
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isVoting = false,
+                        actionMessage = err.message ?: "投票失败，请检查登录状态"
+                    )
+                }
+            }
+        }
+    }
+
+    fun blockFeedAuthor() {
+        val feed = _uiState.value.feed ?: return
+        if (feed.uid.isBlank()) return
+        blacklistRepository?.blockUser(feed.uid, feed.username)
+        _uiState.update { it.copy(actionMessage = "已屏蔽 ${feed.username}") }
     }
 
     fun clearActionMessage() {

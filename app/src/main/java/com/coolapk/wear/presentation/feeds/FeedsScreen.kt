@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -14,7 +15,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +36,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.Create
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -58,57 +64,70 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.itemsIndexed
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.CircularProgressIndicator
-import androidx.wear.compose.material.CompactButton
-import androidx.wear.compose.material.CompactChip
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.ButtonGroup
+import androidx.wear.compose.material3.CardDefaults
+import androidx.wear.compose.material3.CircularProgressIndicator
+import androidx.wear.compose.material3.EdgeButtonSize
+import androidx.wear.compose.material3.FilledTonalButton
+import androidx.wear.compose.material3.FilledTonalIconButton
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.SurfaceTransformation
+import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import coil.compose.AsyncImage
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
-import com.coolapk.wear.presentation.components.WearListContentPadding
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
 import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.rotaryEventHandler
-import com.coolapk.wear.presentation.theme.LocalAppOnPrimaryColor
-import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
-import com.coolapk.wear.presentation.theme.WearSurface
-import com.coolapk.wear.presentation.theme.WearSurfaceVariant
+import com.coolapk.wear.presentation.detail.ComposerMode
+import com.coolapk.wear.presentation.detail.ReplyOverlay
+import com.coolapk.wear.presentation.theme.LocalWatchSettings
 import kotlinx.coroutines.launch
 
 @Composable
 fun FeedsScreen(
     viewModel: FeedsViewModel,
+    unreadCount: Int = 0,
+    isActivePage: Boolean = true,
     onFeedClick: (String) -> Unit,
     onMeClick: () -> Unit,
+    onInboxClick: () -> Unit = {},
     onSearchClick: () -> Unit,
     onUserClick: (String) -> Unit,
-    onTopicClick: (String) -> Unit = {}
+    onTopicClick: (String) -> Unit = {},
+    onProductClick: (String) -> Unit = {}
 ) {
-    val primaryColor = LocalAppPrimaryColor.current
-    val onPrimaryColor = LocalAppOnPrimaryColor.current
+    val colorScheme = MaterialTheme.colorScheme
+    val settings = LocalWatchSettings.current
     val uiState by viewModel.uiState.collectAsState()
-    val listState = rememberScalingLazyListState()
+    val listState = rememberTransformingLazyColumnState()
+    val transformationSpec = rememberTransformationSpec()
     val tabScrollState = rememberScrollState()
+    val followGroupScrollState = rememberScrollState()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    // 原生下拉刷新手势与物理阻尼（同步追踪拖曳量，且仅在下拉偏移 > 0 时拦截 fling）
+    var showComposeOverlay by remember { mutableStateOf(false) }
+    var composeText by remember { mutableStateOf("") }
+    var composePrivate by remember { mutableStateOf(false) }
+
+    // 物理阻尼下拉刷新
     val pullOffsetAnimatable = remember { Animatable(0f) }
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
-    val refreshTriggerPx = with(density) { 50.dp.toPx() }
-    val maxPullPx = with(density) { 85.dp.toPx() }
+    val refreshTriggerPx = with(density) { 48.dp.toPx() }
+    val maxPullPx = with(density) { 82.dp.toPx() }
     val vibrator = remember(context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java)?.defaultVibrator
@@ -119,15 +138,13 @@ fun FeedsScreen(
     }
     var hasVibratedOnThreshold by remember { mutableStateOf(false) }
 
-    val nestedScrollConnection = remember(listState, refreshTriggerPx, maxPullPx) {
+    val nestedScrollConnection = remember(listState, refreshTriggerPx, maxPullPx, settings.hapticEnabled) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.Drag && available.y < 0f && dragOffsetPx > 0f) {
+                if (source == NestedScrollSource.UserInput && available.y < 0f && dragOffsetPx > 0f) {
                     val toConsume = available.y.coerceAtLeast(-dragOffsetPx)
                     dragOffsetPx = (dragOffsetPx + toConsume).coerceAtLeast(0f)
-                    coroutineScope.launch {
-                        pullOffsetAnimatable.snapTo(dragOffsetPx)
-                    }
+                    coroutineScope.launch { pullOffsetAnimatable.snapTo(dragOffsetPx) }
                     return Offset(0f, toConsume)
                 }
                 return Offset.Zero
@@ -138,20 +155,22 @@ fun FeedsScreen(
                 available: Offset,
                 source: NestedScrollSource
             ): Offset {
-                val isAtTop = listState.centerItemIndex <= 1 &&
-                    (listState.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: 0) == 0
-                if (source == NestedScrollSource.Drag && available.y > 0f && isAtTop) {
+                val firstVisibleIndex = listState.layoutInfo.visibleItems.firstOrNull()?.index ?: 0
+                val isAtTop = listState.anchorItemIndex <= 1 && firstVisibleIndex == 0
+                if (source == NestedScrollSource.UserInput && available.y > 0f && isAtTop) {
                     val newOffset = (dragOffsetPx + available.y * 0.45f).coerceAtMost(maxPullPx)
                     dragOffsetPx = newOffset
                     if (newOffset >= refreshTriggerPx && !hasVibratedOnThreshold) {
                         hasVibratedOnThreshold = true
-                        runCatching {
-                            vibrator?.vibrate(VibrationEffect.createOneShot(25, VibrationEffect.DEFAULT_AMPLITUDE))
+                        if (settings.hapticEnabled) {
+                            runCatching {
+                                vibrator?.vibrate(
+                                    VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE)
+                                )
+                            }
                         }
                     }
-                    coroutineScope.launch {
-                        pullOffsetAnimatable.snapTo(newOffset)
-                    }
+                    coroutineScope.launch { pullOffsetAnimatable.snapTo(newOffset) }
                     return Offset(0f, available.y)
                 }
                 return Offset.Zero
@@ -159,9 +178,7 @@ fun FeedsScreen(
 
             override suspend fun onPreFling(available: Velocity): Velocity {
                 val currentValue = dragOffsetPx
-                if (currentValue <= 0f) {
-                    return Velocity.Zero
-                }
+                if (currentValue <= 0f) return Velocity.Zero
                 dragOffsetPx = 0f
                 hasVibratedOnThreshold = false
                 if (currentValue >= refreshTriggerPx) {
@@ -176,7 +193,7 @@ fun FeedsScreen(
         }
     }
 
-    LaunchedEffect(uiState.currentTab) {
+    LaunchedEffect(uiState.currentTab, uiState.followGroup) {
         listState.scrollToItem(0)
     }
 
@@ -188,171 +205,255 @@ fun FeedsScreen(
         onLoadMore = { viewModel.loadMore() }
     )
 
-    HorologistScaffold(listState = listState) {
+    HorologistScaffold(
+        scrollState = listState,
+        edgeButton = {
+            WearEdgeActionButton(
+                scrollState = listState,
+                buttonSize = EdgeButtonSize.ExtraSmall,
+                onClick = {
+                    if (uiState.isLoggedIn) {
+                        composeText = ""
+                        composePrivate = false
+                        showComposeOverlay = true
+                    } else {
+                        viewModel.refresh()
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = if (uiState.isLoggedIn) Icons.Rounded.Create else Icons.Rounded.Refresh,
+                    contentDescription = if (uiState.isLoggedIn) "发动态" else "刷新",
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = if (uiState.isLoggedIn) "发动态" else "刷新",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+    ) { contentPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .nestedScroll(nestedScrollConnection)
         ) {
-            ScalingLazyColumn(
+            TransformingLazyColumn(
                 state = listState,
-                contentPadding = WearListContentPadding,
-                anchorType = ScalingLazyListAnchorType.ItemStart,
+                contentPadding = contentPadding,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        translationY = pullOffsetAnimatable.value * 0.5f
+                        translationY = pullOffsetAnimatable.value * 0.45f
                     }
-                    .rotaryEventHandler(listState)
+                    .rotaryEventHandler(listState, enabled = isActivePage && !showComposeOverlay)
             ) {
-                // 顶部标题与频道 Tab 栏
-                item {
+                // 顶部 Material 3 Expressive 快捷操作组（搜索 / 消息未读 / 我的）
+                item(key = "home_header") {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
                     ) {
+                        Text(
+                            text = "腕酷 · ${uiState.currentTab.title}",
+                            color = colorScheme.primary,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val searchInteraction = remember { MutableInteractionSource() }
+                        val inboxInteraction = remember { MutableInteractionSource() }
+                        val meInteraction = remember { MutableInteractionSource() }
+
+                        ButtonGroup(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            FilledTonalIconButton(
+                                onClick = onSearchClick,
+                                interactionSource = searchInteraction,
+                                shapes = IconButtonDefaults.animatedShapes(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .animateWidth(searchInteraction)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Search,
+                                    contentDescription = "搜索",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            FilledTonalIconButton(
+                                onClick = onInboxClick,
+                                interactionSource = inboxInteraction,
+                                shapes = IconButtonDefaults.animatedShapes(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .animateWidth(inboxInteraction)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Notifications,
+                                        contentDescription = "消息",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    if (unreadCount > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .offset(x = 3.dp, y = (-2).dp)
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(colorScheme.error)
+                                        )
+                                    }
+                                }
+                            }
+
+                            FilledTonalIconButton(
+                                onClick = onMeClick,
+                                interactionSource = meInteraction,
+                                shapes = IconButtonDefaults.animatedShapes(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .animateWidth(meInteraction)
+                            ) {
+                                if (uiState.isLoggedIn && uiState.userAvatar.isNotBlank()) {
+                                    AsyncImage(
+                                        model = uiState.userAvatar,
+                                        contentDescription = "我的",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AccountCircle,
+                                        contentDescription = "我的",
+                                        tint = if (uiState.isLoggedIn) colorScheme.primary else colorScheme.onSurface,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // 7 频道横向切换条（头条 / 推荐 / 热榜 / 关注 / 酷图 / 数码 / 二手）
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                                .horizontalScroll(tabScrollState),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "酷安",
-                                color = primaryColor,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CompactButton(
-                                    onClick = onSearchClick,
-                                    colors = ButtonDefaults.buttonColors(backgroundColor = WearSurfaceVariant),
-                                    modifier = Modifier.size(28.dp)
+                            FeedTab.entries.forEach { tab ->
+                                val isSelected = uiState.currentTab == tab
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isSelected) colorScheme.primary else colorScheme.surfaceContainerHigh
+                                        )
+                                        .clickable { viewModel.switchTab(tab) }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Search,
-                                        contentDescription = "搜索",
-                                        modifier = Modifier.size(15.dp),
-                                        tint = Color.White
+                                    Text(
+                                        text = tab.title,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) colorScheme.onPrimary else colorScheme.onSurface
                                     )
                                 }
+                            }
+                        }
 
-                                Spacer(modifier = Modifier.width(6.dp))
-
-                                CompactButton(
-                                    onClick = onMeClick,
-                                    colors = ButtonDefaults.buttonColors(backgroundColor = WearSurfaceVariant),
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    if (uiState.isLoggedIn && uiState.userAvatar.isNotBlank()) {
-                                        AsyncImage(
-                                            model = uiState.userAvatar,
-                                            contentDescription = "我的",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .clip(CircleShape)
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Rounded.AccountCircle,
-                                            contentDescription = "我的",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = if (uiState.isLoggedIn) primaryColor else Color.White
+                        // 关注流二级分组筛选条
+                        if (uiState.currentTab == FeedTab.TIMELINE && uiState.isLoggedIn) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(followGroupScrollState),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FollowGroup.entries.forEach { grp ->
+                                    val isSelected = uiState.followGroup == grp
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isSelected) colorScheme.secondaryContainer else colorScheme.surfaceContainerLow
+                                            )
+                                            .clickable { viewModel.switchFollowGroup(grp) }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = grp.label,
+                                            style = MaterialTheme.typography.bodyExtraSmall,
+                                            color = if (isSelected) colorScheme.onSecondaryContainer else colorScheme.onSurfaceVariant,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                         )
                                     }
                                 }
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(tabScrollState),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            FeedTab.entries.forEach { tab ->
-                                val isSelected = uiState.currentTab == tab
-                                CompactChip(
-                                    onClick = { viewModel.switchTab(tab) },
-                                    label = {
-                                        Text(
-                                            text = tab.title,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isSelected) onPrimaryColor else Color.White
-                                        )
-                                    },
-                                    colors = ChipDefaults.chipColors(
-                                        backgroundColor = if (isSelected) primaryColor else WearSurfaceVariant
-                                    ),
-                                    modifier = Modifier.padding(horizontal = 2.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
                     }
                 }
 
-                // 关注流未登录提示卡片
+                // 关注流未登录引导卡片
                 val needsTimelineLogin = uiState.currentTab == FeedTab.TIMELINE && !uiState.isLoggedIn
                 if (needsTimelineLogin) {
-                    item {
+                    item(key = "timeline_login") {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(WearSurface)
-                                .padding(12.dp)
+                                .clip(MaterialTheme.shapes.large)
+                                .background(colorScheme.surfaceContainer)
+                                .padding(14.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.AccountCircle,
                                 contentDescription = "未登录",
-                                tint = Color(0xFFA0A0A5),
+                                tint = colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(28.dp)
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = "关注动态需登录账号",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
+                                color = colorScheme.onSurface,
+                                style = MaterialTheme.typography.titleSmall
                             )
-                            Spacer(modifier = Modifier.height(3.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "请前往【我的】导入手机端登录信息",
-                                color = Color(0xFFA0A0A5),
-                                fontSize = 10.sp,
+                                text = "左滑至【我的】通过伴侣端一键同步登录",
+                                color = colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyExtraSmall,
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            CompactChip(
+                            FilledTonalButton(
                                 onClick = onMeClick,
-                                label = {
-                                    Text(
-                                        text = "去导入登录",
-                                        fontSize = 11.sp,
-                                        color = onPrimaryColor
-                                    )
-                                },
-                                colors = ChipDefaults.chipColors(backgroundColor = primaryColor)
+                                label = { Text("去导入登录") }
                             )
                         }
                     }
                 }
 
                 if (uiState.isLoading && uiState.items.isEmpty()) {
-                    item { WearLoadingPlaceholder() }
+                    item(key = "loading_skeleton") { WearLoadingPlaceholder() }
                 }
 
                 if (uiState.error != null && uiState.items.isEmpty() && !needsTimelineLogin) {
-                    item {
+                    item(key = "error_retry") {
                         WearErrorRetry(
                             message = uiState.error.orEmpty(),
                             onRetry = { viewModel.refresh() }
@@ -361,7 +462,7 @@ fun FeedsScreen(
                 }
 
                 if (uiState.items.isEmpty() && !uiState.isLoading && uiState.error == null && !needsTimelineLogin) {
-                    item {
+                    item(key = "empty_state") {
                         WearEmptyState(
                             text = if (uiState.currentTab == FeedTab.TIMELINE) {
                                 "暂无关注的动态\n快去关注有趣的酷友吧"
@@ -377,12 +478,17 @@ fun FeedsScreen(
                         feed = feed,
                         onClick = { onFeedClick(feed.id) },
                         onUserClick = onUserClick,
-                        onTopicClick = onTopicClick
+                        onTopicClick = onTopicClick,
+                        onProductClick = onProductClick,
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
                     )
                 }
 
                 if (uiState.isLoadingMore || (!uiState.hasMore && uiState.items.isNotEmpty())) {
-                    item {
+                    item(key = "load_more_footer") {
                         WearLoadMoreFooter(
                             isLoadingMore = uiState.isLoadingMore,
                             hasMore = uiState.hasMore,
@@ -393,34 +499,30 @@ fun FeedsScreen(
                 }
             }
 
-            // 浮动下拉刷新指示器
+            // 浮动下拉刷新提示胶囊
             AnimatedVisibility(
                 visible = pullOffsetAnimatable.value > 12f || (uiState.isLoading && uiState.items.isNotEmpty()),
                 enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
                 exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 16.dp)
+                    .padding(top = 20.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(WearSurface.copy(alpha = 0.95f))
+                        .clip(CircleShape)
+                        .background(colorScheme.surfaceContainerHigh.copy(alpha = 0.96f))
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     if (uiState.isLoading) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                indicatorColor = primaryColor,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "正在刷新…",
-                                color = primaryColor,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                                color = colorScheme.primary,
+                                style = MaterialTheme.typography.labelSmall
                             )
                         }
                     } else {
@@ -429,23 +531,43 @@ fun FeedsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.ArrowDownward,
                                 contentDescription = "下拉刷新",
-                                tint = if (progress >= 1f) primaryColor else Color(0xFFA0A0A5),
+                                tint = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant,
                                 modifier = Modifier
                                     .size(13.dp)
-                                    .graphicsLayer {
-                                        rotationZ = progress * 180f
-                                    }
+                                    .graphicsLayer { rotationZ = progress * 180f }
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (progress >= 1f) "松开立即刷新" else "下拉刷新",
-                                color = if (progress >= 1f) primaryColor else Color(0xFFA0A0A5),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                                text = if (progress >= 1f) "松开刷新" else "下拉刷新",
+                                color = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall
                             )
                         }
                     }
                 }
+            }
+
+            // 手表端快捷发布动态浮层
+            if (showComposeOverlay) {
+                ReplyOverlay(
+                    mode = ComposerMode.NEW_FEED,
+                    replyText = composeText,
+                    onReplyTextChange = { composeText = it },
+                    isSubmitting = uiState.isPublishing,
+                    isPrivate = composePrivate,
+                    onPrivateChange = { composePrivate = it },
+                    onSubmit = {
+                        viewModel.publishFeed(composeText, composePrivate) { ok, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            if (ok) {
+                                showComposeOverlay = false
+                                composeText = ""
+                                composePrivate = false
+                            }
+                        }
+                    },
+                    onDismiss = { showComposeOverlay = false }
+                )
             }
         }
     }

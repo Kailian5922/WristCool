@@ -4,15 +4,17 @@ import android.content.Context
 import com.coolapk.wear.data.api.CoolapkApi
 import com.coolapk.wear.data.api.DeviceProfile
 import com.coolapk.wear.data.repository.AuthRepository
+import com.coolapk.wear.data.repository.BlacklistRepository
 import com.coolapk.wear.data.repository.BrowsingHistoryRepository
 import com.coolapk.wear.data.repository.FeedUpdateBus
+import com.coolapk.wear.data.repository.SearchHistoryRepository
+import com.coolapk.wear.data.repository.SettingsRepository
 import com.coolapk.wear.data.util.ImageSaver
 import okhttp3.OkHttpClient
 
 /**
  * 轻量级应用级依赖容器（Application 生命周期内单例共享）。
- * 统一管理网络客户端、鉴权仓储、历史记录、动态事件总线与图片保存器，
- * 避免多处自行实例化导致状态割裂（如 BroadcastReceiver 导入凭据不同步）或连接池泄漏。
+ * 统一管理网络客户端、鉴权、设置、屏蔽过滤、搜索历史、浏览历史、事件总线与图片保存器。
  */
 class AppContainer(context: Context) {
 
@@ -23,6 +25,12 @@ class AppContainer(context: Context) {
     val okHttpClient: OkHttpClient by lazy { CoolapkApi.defaultOkHttpClient() }
 
     val authRepository: AuthRepository by lazy { AuthRepository(appContext) }
+
+    val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
+
+    val blacklistRepository: BlacklistRepository by lazy { BlacklistRepository(appContext) }
+
+    val searchHistoryRepository: SearchHistoryRepository by lazy { SearchHistoryRepository(appContext) }
 
     val browsingHistoryRepository: BrowsingHistoryRepository by lazy {
         BrowsingHistoryRepository(appContext)
