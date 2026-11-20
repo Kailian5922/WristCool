@@ -42,7 +42,6 @@ import androidx.wear.compose.material3.AlertDialog
 import androidx.wear.compose.material3.AlertDialogDefaults
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledIconButton
 import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.Icon
@@ -177,28 +176,46 @@ fun TransformingLazyColumnItemScope.WearSectionSubHeader(
 }
 
 /**
- * Material 3 Expressive 骨架屏加载占位（采用官方 placeholderShimmer）。
+ * Material 3 Expressive 形态变换加载占位。
+ * 结合标志性 Expressive 多边形变形动画与可选柔和骨架卡片。
  */
 @Composable
 fun WearLoadingPlaceholder(
     height: Dp = 96.dp,
-    indicatorSize: Dp = 24.dp,
-    useSkeleton: Boolean = true
+    indicatorSize: Dp = 36.dp,
+    useSkeleton: Boolean = true,
+    label: String? = "加载中…"
 ) {
     if (useSkeleton) {
         val placeholderState = rememberPlaceholderState(isVisible = true)
         Column(
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp)
-                .placeholderShimmer(placeholderState)
+                .padding(vertical = 8.dp)
         ) {
-            repeat(2) {
+            ExpressiveLoadingIndicator(
+                size = indicatorSize.coerceAtLeast(36.dp),
+                contained = true
+            )
+            if (!label.isNullOrBlank()) {
+                Text(
+                    text = label,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .placeholderShimmer(placeholderState)
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(68.dp)
+                        .height(54.dp)
                         .clip(MaterialTheme.shapes.large)
                         .placeholder(placeholderState)
                 )
@@ -211,8 +228,9 @@ fun WearLoadingPlaceholder(
                 .height(height),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(indicatorSize)
+            ExpressiveLoadingIndicator(
+                size = indicatorSize.coerceAtLeast(24.dp),
+                contained = indicatorSize >= 28.dp
             )
         }
     }
@@ -326,7 +344,7 @@ fun WearLoadMoreFooter(
                 .padding(vertical = 10.dp),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp))
+            ExpressiveLoadingIndicator(size = 22.dp, contained = false)
         }
     } else if (!hasMore && hasItems) {
         Text(

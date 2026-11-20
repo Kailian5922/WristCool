@@ -9,13 +9,17 @@ import com.coolapk.wear.data.model.VoteInfo
 import com.coolapk.wear.data.model.VoteOption
 import com.coolapk.wear.data.repository.BlacklistState
 import com.coolapk.wear.data.repository.BlockedUserEntry
+import com.coolapk.wear.data.repository.FeedUpdateBus
 import com.coolapk.wear.presentation.detail.FeedDetailViewModel
+import com.coolapk.wear.presentation.feeds.FeedTab
+import com.coolapk.wear.presentation.feeds.FeedsViewModel
 import com.coolapk.wear.presentation.inbox.ChatViewModel
 import com.coolapk.wear.presentation.me.FavoritesViewModel
 import com.coolapk.wear.presentation.search.SearchViewModel
 import com.coolapk.wear.presentation.user.UserProfileViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -279,5 +283,78 @@ class ViewModelRegressionTest {
     fun `ChatViewModel buildUkey orders numeric uids ascending`() {
         assertEquals("42_1000", ChatViewModel.buildUkey("1000", "42"))
         assertEquals("42_1000", ChatViewModel.buildUkey("42", "1000"))
+    }
+
+    @Test
+    fun `FeedsViewModel caches loaded channels across switches and reloads only on explicit refresh`() = runTest(testDispatcher) {
+        var headlineCalls = 0
+        var hotCalls = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/v6/main/headline") -> {
+                        headlineCalls++
+                        MockResponse().setBody(
+                            """{"data":[{"entityType":"feed","id":"h$headlineCalls","uid":"10","username":"HeadUser","message":"头条第${headlineCalls}次"}]}"""
+                        )
+                    }
+                    path.startsWith("/v6/page/dataList") -> {
+                        hotCalls++
+                        MockResponse().setBody(
+                            """{"data":[{"entityType":"feed","id":"hot$hotCalls","uid":"20","username":"HotUser","message":"热榜第${hotCalls}次"}]}"""
+                        )
+                    }
+                    else -> MockResponse().setBody("""{"data":[]}""")
+                }
+            }
+        }
+
+        val bus = FeedUpdateBus()
+        val vm = FeedsViewModel(
+            api = api,
+            feedUpdateBus = bus,
+            credentialsFlow = MutableStateFlow(AuthCredentials(cookie = "uid=1; token=t1", uid = "1"))
+        )
+
+        // 冷启动自动刷新头条一次
+        waitUntil { !vm.uiState.value.isLoading && vm.uiState.value.items.isNotEmpty() }
+        assertEquals(1, headlineCalls)
+        assertEquals(listOf("h1"), vm.uiState.value.items.map { it.id })
+
+        // 首次切换到热榜 -> 触发热榜加载一次
+        vm.switchTab(FeedTab.HOT)
+        waitUntil { vm.uiState.value.currentTab == FeedTab.HOT && !vm.uiState.value.isLoading && vm.uiState.value.items.isNotEmpty() }
+        assertEquals(1, hotCalls)
+        assertEquals(listOf("hot1"), vm.uiState.value.items.map { it.id })
+
+        // 后台通过 FeedUpdateBus 更新已缓存头条的点赞状态
+        bus.publish(
+            FeedItem(
+                id = "h1", uid = "10", username = "HeadUser", userAvatar = "",
+                dateline = 0L, dateString = "", deviceTitle = "", title = "",
+                message = "头条第1次", likeNum = 99, isLiked = true
+            )
+        )
+        advanceUntilIdle()
+
+        // 切回头条 -> 直接命中缓存，不发起新网络请求，且保留同步的点赞状态
+        vm.switchTab(FeedTab.HEADLINE)
+        advanceUntilIdle()
+        assertEquals(1, headlineCalls)
+        assertEquals(listOf("h1"), vm.uiState.value.items.map { it.id })
+        assertEquals(99, vm.uiState.value.items.first().likeNum)
+        assertTrue(vm.uiState.value.items.first().isLiked)
+
+        // 再次点击当前已选中的头条 -> 不重复加载
+        vm.switchTab(FeedTab.HEADLINE)
+        advanceUntilIdle()
+        assertEquals(1, headlineCalls)
+
+        // 显式下拉刷新 -> 触发重新拉取并覆盖缓存
+        vm.refresh()
+        waitUntil { headlineCalls == 2 && vm.uiState.value.items.firstOrNull()?.id == "h2" }
+        assertEquals(2, headlineCalls)
+        assertEquals(listOf("h2"), vm.uiState.value.items.map { it.id })
     }
 }

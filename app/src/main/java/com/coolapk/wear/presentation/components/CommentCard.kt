@@ -1,11 +1,14 @@
 package com.coolapk.wear.presentation.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -22,25 +25,34 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.ThumbUpOffAlt
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import coil.compose.AsyncImage
+import coil.decode.BitmapFactoryDecoder
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.coolapk.wear.data.model.CommentItem
 import com.coolapk.wear.data.model.SubReplyItem
+import com.coolapk.wear.presentation.theme.LocalWatchSettings
 
 /**
  * 单条评论的楼中楼展开与分页状态，由 ViewModel 托管。
@@ -56,7 +68,8 @@ data class SubReplyUiState(
 
 /**
  * Material 3 Expressive 评论卡片。
- * 借鉴 coolapk-desktop 与 c001apk-Revived，支持评论点赞、回复单条评论/楼中楼、删除自己的评论与全量楼中楼分页展开。
+ * 借鉴 coolapk-desktop 与 c001apk-Revived，支持评论点赞、回复单条评论/楼中楼、删除自己的评论与全量楼中楼分页展开；
+ * 评论配图默认以轻量小方块预览图呈现，点击后进入全屏加载完整原图/动图；开启「无图省流模式」后仅展示点击查看入口。
  */
 @Composable
 fun CommentCard(
@@ -75,6 +88,7 @@ fun CommentCard(
     onViewImage: ((String) -> Unit)? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val noImageMode = LocalWatchSettings.current.noImageMode
     val loadedSubReplies = subReplyState.replies.ifEmpty { comment.subReplies }
     val isOwnComment = currentUid.isNotBlank() && comment.uid == currentUid
 
@@ -159,26 +173,15 @@ fun CommentCard(
             )
         }
 
-        // 评论配图 / GIF
+        // 评论配图 / GIF：默认加载小方块低分辨率预览图（点开才全量加载），无图模式合并为点击查看按钮
         if (comment.pic.isNotBlank()) {
-            Spacer(modifier = Modifier.height(5.dp))
-            val isGif = comment.pic.contains(".gif", ignoreCase = true)
-            CompactButton(
-                onClick = { onViewImage?.invoke(comment.pic) },
-                icon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Image,
-                        contentDescription = "图片",
-                        modifier = Modifier.size(14.dp)
-                    )
-                },
-                label = {
-                    Text(
-                        text = if (isGif) "查看动图 GIF" else "查看评论配图",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            Spacer(modifier = Modifier.height(6.dp))
+            CommentImagePreview(
+                imageUrl = comment.pic,
+                previewSize = 56.dp,
+                noImageMode = noImageMode,
+                isSubReply = false,
+                onClick = { onViewImage?.invoke(comment.pic) }
             )
         }
 
@@ -238,11 +241,15 @@ fun CommentCard(
                     )
 
                     if (sub.pic.isNotBlank()) {
-                        val isSubGif = sub.pic.contains(".gif", ignoreCase = true)
-                        CompactButton(
-                            onClick = { onViewImage?.invoke(sub.pic) },
-                            label = { Text(if (isSubGif) "查看GIF" else "查看图片") }
+                        Spacer(modifier = Modifier.height(3.dp))
+                        CommentImagePreview(
+                            imageUrl = sub.pic,
+                            previewSize = 44.dp,
+                            noImageMode = noImageMode,
+                            isSubReply = true,
+                            onClick = { onViewImage?.invoke(sub.pic) }
                         )
+                        Spacer(modifier = Modifier.height(3.dp))
                     }
                 }
 
@@ -251,7 +258,7 @@ fun CommentCard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(vertical = 4.dp)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(12.dp))
+                        ExpressiveLoadingIndicator(size = 15.dp, contained = false)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "正在加载楼中楼…",
@@ -449,6 +456,94 @@ fun CommentCard(
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 评论区 / 楼中楼配图预览组件：
+ * - 正常模式（noImageMode == false）：加载轻量小方块缩略图（限制解码尺寸且 GIF 仅解首帧，节省手表内存与流量），点击后进入全屏完整加载原图/动图；
+ * - 无图省流模式（noImageMode == true）：不预载预览图，仅保留点击查看入口按钮。
+ */
+@Composable
+private fun CommentImagePreview(
+    imageUrl: String,
+    previewSize: Dp,
+    noImageMode: Boolean,
+    isSubReply: Boolean,
+    onClick: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val isGif = remember(imageUrl) { imageUrl.contains(".gif", ignoreCase = true) }
+
+    if (noImageMode) {
+        CompactButton(
+            onClick = onClick,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Image,
+                    contentDescription = "图片",
+                    modifier = Modifier.size(13.dp)
+                )
+            },
+            label = {
+                Text(
+                    text = when {
+                        isGif && isSubReply -> "查看GIF"
+                        isGif -> "查看动图 GIF"
+                        isSubReply -> "查看图片"
+                        else -> "查看评论配图"
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        )
+        return
+    }
+
+    val context = LocalContext.current
+    val thumbRequest = remember(imageUrl, context) {
+        ImageRequest.Builder(context)
+            .data(imageUrl)
+            .size(160, 160)
+            .precision(Precision.INEXACT)
+            .decoderFactory(BitmapFactoryDecoder.Factory())
+            .crossfade(true)
+            .build()
+    }
+
+    val shape = RoundedCornerShape(if (isSubReply) 8.dp else 10.dp)
+    Box(
+        modifier = Modifier
+            .size(previewSize)
+            .clip(shape)
+            .background(colorScheme.surfaceContainerHigh)
+            .border(width = 0.75.dp, color = colorScheme.outlineVariant, shape = shape)
+            .clickable(onClick = onClick)
+    ) {
+        AsyncImage(
+            model = thumbRequest,
+            contentDescription = if (isGif) "动图预览，点击查看完整动图" else "评论配图预览，点击查看原图",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        if (isGif) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(3.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 3.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = "GIF",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }

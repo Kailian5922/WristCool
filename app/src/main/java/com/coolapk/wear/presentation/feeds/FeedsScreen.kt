@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Create
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Refresh
@@ -69,7 +68,6 @@ import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.CardDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.FilledTonalIconButton
@@ -81,6 +79,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import coil.compose.AsyncImage
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
@@ -122,6 +121,14 @@ fun FeedsScreen(
     var showComposeOverlay by remember { mutableStateOf(false) }
     var composeText by remember { mutableStateOf("") }
     var composePrivate by remember { mutableStateOf(false) }
+
+    // 记录每个频道的滚动位置，切回已缓存频道时平滑恢复阅读位置
+    val savedScrollPositions = remember { mutableMapOf<Pair<FeedTab, FollowGroup>, Pair<Int, Int>>() }
+    var previousChannelKey by remember {
+        mutableStateOf(
+            uiState.currentTab to if (uiState.currentTab == FeedTab.TIMELINE) uiState.followGroup else FollowGroup.ALL
+        )
+    }
 
     // 物理阻尼下拉刷新
     val pullOffsetAnimatable = remember { Animatable(0f) }
@@ -193,8 +200,19 @@ fun FeedsScreen(
         }
     }
 
-    LaunchedEffect(uiState.currentTab, uiState.followGroup) {
-        listState.scrollToItem(0)
+    val currentChannelKey = uiState.currentTab to if (uiState.currentTab == FeedTab.TIMELINE) {
+        uiState.followGroup
+    } else {
+        FollowGroup.ALL
+    }
+
+    LaunchedEffect(currentChannelKey) {
+        if (previousChannelKey != currentChannelKey) {
+            savedScrollPositions[previousChannelKey] = listState.anchorItemIndex to listState.anchorItemScrollOffset
+            previousChannelKey = currentChannelKey
+            val (savedIdx, savedOffset) = savedScrollPositions[currentChannelKey] ?: (0 to 0)
+            listState.scrollToItem(savedIdx.coerceAtLeast(0), savedOffset)
+        }
     }
 
     LoadMoreEffect(
@@ -449,7 +467,9 @@ fun FeedsScreen(
                 }
 
                 if (uiState.isLoading && uiState.items.isEmpty()) {
-                    item(key = "loading_skeleton") { WearLoadingPlaceholder() }
+                    item(key = "loading_skeleton") {
+                        WearLoadingPlaceholder(label = "正在加载${uiState.currentTab.title}…")
+                    }
                 }
 
                 if (uiState.error != null && uiState.items.isEmpty() && !needsTimelineLogin) {
@@ -499,7 +519,7 @@ fun FeedsScreen(
                 }
             }
 
-            // 浮动下拉刷新提示胶囊
+            // Material 3 Expressive 浮动下拉刷新形态变换指示胶囊
             AnimatedVisibility(
                 visible = pullOffsetAnimatable.value > 12f || (uiState.isLoading && uiState.items.isNotEmpty()),
                 enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
@@ -517,7 +537,7 @@ fun FeedsScreen(
                 ) {
                     if (uiState.isLoading) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(13.dp))
+                            ExpressiveLoadingIndicator(size = 18.dp, contained = false)
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "正在刷新…",
@@ -528,15 +548,13 @@ fun FeedsScreen(
                     } else {
                         val progress = (pullOffsetAnimatable.value / refreshTriggerPx).coerceIn(0f, 1f)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Rounded.ArrowDownward,
-                                contentDescription = "下拉刷新",
-                                tint = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .size(13.dp)
-                                    .graphicsLayer { rotationZ = progress * 180f }
+                            ExpressiveLoadingIndicator(
+                                size = 18.dp,
+                                contained = false,
+                                progress = progress,
+                                indicatorColor = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = if (progress >= 1f) "松开刷新" else "下拉刷新",
                                 color = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant,

@@ -155,7 +155,7 @@ fun SettingsScreen(
                     checked = settings.noImageMode,
                     onCheckedChange = { settingsRepository.setNoImageMode(it) },
                     label = { Text("无图省流模式", maxLines = 1) },
-                    secondaryLabel = { Text("列表不载图，详情按需点击查看", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    secondaryLabel = { Text("列表与评论不载预览图，点击查看原图", maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     transformation = SurfaceTransformation(transformationSpec),
                     modifier = Modifier
                         .fillMaxWidth()

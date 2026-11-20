@@ -42,7 +42,6 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButtonDefaults
@@ -53,6 +52,7 @@ import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
@@ -101,7 +101,7 @@ fun UserProfileScreen(
     if (uiState.isLoadingProfile && uiState.userProfile == null) {
         HorologistScaffold(showTimeText = false) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(modifier = Modifier.size(26.dp))
+                ExpressiveLoadingIndicator(size = 40.dp, contained = true)
             }
         }
         return

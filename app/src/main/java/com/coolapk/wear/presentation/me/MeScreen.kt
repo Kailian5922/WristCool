@@ -51,7 +51,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -60,6 +59,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.coolapk.wear.BuildConfig
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.RotaryScrollLock
 import com.coolapk.wear.presentation.components.UserAvatar
@@ -403,7 +403,7 @@ fun MeScreen(
                         },
                         icon = {
                             if (uiState.isImporting) {
-                                CircularProgressIndicator(modifier = Modifier.size(15.dp))
+                                ExpressiveLoadingIndicator(size = 16.dp, contained = false)
                             } else {
                                 Icon(Icons.Rounded.ContentPaste, contentDescription = null, tint = colorScheme.primary, modifier = Modifier.size(16.dp))
                             }

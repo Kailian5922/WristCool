@@ -28,12 +28,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.coolapk.wear.data.util.QrCodeGenerator
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.rotaryEventHandler
@@ -119,7 +119,7 @@ fun QrCodeOverlay(
                                     modifier = Modifier.fillMaxSize()
                                 )
                             } else {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                ExpressiveLoadingIndicator(size = 30.dp, contained = false)
                             }
                         }
 

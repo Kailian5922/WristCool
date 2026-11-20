@@ -30,7 +30,6 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.CheckboxButton
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.Icon
@@ -40,6 +39,7 @@ import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
@@ -95,7 +95,7 @@ fun FavoritesScreen(
                     }
                 ) {
                     if (uiState.isBatchDeleting) {
-                        CircularProgressIndicator(modifier = Modifier.size(15.dp))
+                        ExpressiveLoadingIndicator(size = 18.dp, contained = false)
                     } else {
                         Icon(Icons.Rounded.Delete, contentDescription = "取消收藏", modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))

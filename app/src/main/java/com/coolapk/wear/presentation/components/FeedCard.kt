@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,6 +40,9 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
+import coil.decode.BitmapFactoryDecoder
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.coolapk.wear.data.model.FeedItem
 import com.coolapk.wear.data.util.TextSanitizer
 import com.coolapk.wear.presentation.theme.LocalWatchSettings
@@ -336,6 +340,7 @@ fun FeedCard(
                     )
                 }
             } else {
+                val thumbContext = LocalContext.current
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -343,8 +348,17 @@ fun FeedCard(
                 ) {
                     val previewPics = feed.picArr.take(3)
                     previewPics.forEach { picUrl ->
+                        val thumbRequest = remember(picUrl, thumbContext) {
+                            ImageRequest.Builder(thumbContext)
+                                .data(picUrl)
+                                .size(144, 144)
+                                .precision(Precision.INEXACT)
+                                .decoderFactory(BitmapFactoryDecoder.Factory())
+                                .crossfade(true)
+                                .build()
+                        }
                         AsyncImage(
-                            model = picUrl,
+                            model = thumbRequest,
                             contentDescription = "图片",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier

@@ -3,6 +3,7 @@ package com.coolapk.wear.presentation.feeds
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.coolapk.wear.data.api.CoolapkApi
+import com.coolapk.wear.data.model.AuthCredentials
 import com.coolapk.wear.data.model.FeedItem
 import com.coolapk.wear.data.repository.AuthRepository
 import com.coolapk.wear.data.repository.BlacklistRepository
@@ -55,19 +56,38 @@ data class FeedsUiState(
 
 class FeedsViewModel(
     private val api: CoolapkApi,
-    private val authRepository: AuthRepository,
+    private val authRepository: AuthRepository? = null,
     private val feedUpdateBus: FeedUpdateBus? = null,
     private val blacklistRepository: BlacklistRepository? = null,
-    private val settingsRepository: SettingsRepository? = null
+    private val settingsRepository: SettingsRepository? = null,
+    credentialsFlow: StateFlow<AuthCredentials>? = null
 ) : ViewModel() {
 
+    private val effectiveCredentialsFlow: StateFlow<AuthCredentials> =
+        credentialsFlow ?: authRepository?.credentials ?: MutableStateFlow(AuthCredentials())
+
+    private data class ChannelKey(
+        val tab: FeedTab,
+        val followGroup: FollowGroup = FollowGroup.ALL
+    )
+
+    private data class ChannelSnapshot(
+        val rawItems: List<FeedItem>,
+        val page: Int,
+        val hasMore: Boolean
+    )
+
+    private fun cacheKeyOf(tab: FeedTab, group: FollowGroup): ChannelKey =
+        ChannelKey(tab = tab, followGroup = if (tab == FeedTab.TIMELINE) group else FollowGroup.ALL)
+
     private val initialTab = FeedTab.fromName(settingsRepository?.settings?.value?.defaultFeedTab)
+    private val channelCache = mutableMapOf<ChannelKey, ChannelSnapshot>()
 
     private val _uiState = MutableStateFlow(
         FeedsUiState(
             currentTab = initialTab,
-            isLoggedIn = authRepository.credentials.value.isLoggedIn,
-            userAvatar = authRepository.credentials.value.avatar
+            isLoggedIn = effectiveCredentialsFlow.value.isLoggedIn,
+            userAvatar = effectiveCredentialsFlow.value.avatar
         )
     )
     val uiState: StateFlow<FeedsUiState> = _uiState.asStateFlow()
@@ -76,13 +96,16 @@ class FeedsViewModel(
 
     init {
         viewModelScope.launch {
-            authRepository.credentials.collect { creds ->
+            effectiveCredentialsFlow.collect { creds ->
                 val wasLoggedIn = _uiState.value.isLoggedIn
                 _uiState.update { state ->
                     state.copy(
                         isLoggedIn = creds.isLoggedIn,
                         userAvatar = creds.avatar
                     )
+                }
+                if (wasLoggedIn != creds.isLoggedIn) {
+                    channelCache.keys.removeAll { it.tab == FeedTab.TIMELINE }
                 }
                 if (_uiState.value.currentTab == FeedTab.TIMELINE) {
                     if (!wasLoggedIn && creds.isLoggedIn) {
@@ -117,6 +140,16 @@ class FeedsViewModel(
         if (feedUpdateBus != null) {
             viewModelScope.launch {
                 feedUpdateBus.updates.collect { updated ->
+                    channelCache.entries.forEach { entry ->
+                        val cached = entry.value
+                        if (cached.rawItems.any { it.id == updated.id }) {
+                            entry.setValue(
+                                cached.copy(
+                                    rawItems = cached.rawItems.map { if (it.id == updated.id) updated else it }
+                                )
+                            )
+                        }
+                    }
                     _uiState.update { state ->
                         if (state.rawItems.none { it.id == updated.id }) {
                             state
@@ -129,6 +162,14 @@ class FeedsViewModel(
             }
             viewModelScope.launch {
                 feedUpdateBus.deletions.collect { deletedId ->
+                    channelCache.entries.forEach { entry ->
+                        val cached = entry.value
+                        if (cached.rawItems.any { it.id == deletedId }) {
+                            entry.setValue(
+                                cached.copy(rawItems = cached.rawItems.filterNot { it.id == deletedId })
+                            )
+                        }
+                    }
                     _uiState.update { state ->
                         val nextRaw = state.rawItems.filterNot { it.id == deletedId }
                         state.copy(rawItems = nextRaw, items = applyBlacklist(nextRaw))
@@ -137,6 +178,7 @@ class FeedsViewModel(
             }
             viewModelScope.launch {
                 feedUpdateBus.feedCreated.collect {
+                    channelCache.keys.removeAll { it.tab == FeedTab.TIMELINE || it.tab == FeedTab.HEADLINE }
                     if (_uiState.value.currentTab == FeedTab.TIMELINE || _uiState.value.currentTab == FeedTab.HEADLINE) {
                         refresh()
                     }
@@ -144,6 +186,7 @@ class FeedsViewModel(
             }
         }
 
+        // 应用冷启动首次打开时自动刷新默认频道一次，加载后即固定缓存
         loadFeeds(refresh = true)
     }
 
@@ -151,12 +194,32 @@ class FeedsViewModel(
         return blacklistRepository?.filterFeeds(list) ?: list
     }
 
+    fun isChannelCached(tab: FeedTab, group: FollowGroup = _uiState.value.followGroup): Boolean {
+        return channelCache.containsKey(cacheKeyOf(tab, group))
+    }
+
     fun switchTab(tab: FeedTab) {
         if (_uiState.value.currentTab == tab) {
-            refresh()
             return
         }
         loadJob?.cancel()
+        val targetGroup = _uiState.value.followGroup
+        val cached = channelCache[cacheKeyOf(tab, targetGroup)]
+        if (cached != null) {
+            _uiState.update {
+                it.copy(
+                    currentTab = tab,
+                    rawItems = cached.rawItems,
+                    items = applyBlacklist(cached.rawItems),
+                    page = cached.page,
+                    hasMore = cached.hasMore,
+                    isLoading = false,
+                    isLoadingMore = false,
+                    error = null
+                )
+            }
+            return
+        }
         _uiState.update {
             it.copy(
                 currentTab = tab,
@@ -164,7 +227,7 @@ class FeedsViewModel(
                 items = emptyList(),
                 page = 1,
                 hasMore = true,
-                isLoading = false,
+                isLoading = true,
                 isLoadingMore = false,
                 error = null
             )
@@ -175,6 +238,23 @@ class FeedsViewModel(
     fun switchFollowGroup(group: FollowGroup) {
         if (_uiState.value.followGroup == group) return
         loadJob?.cancel()
+        val tab = _uiState.value.currentTab
+        val cached = channelCache[cacheKeyOf(tab, group)]
+        if (cached != null) {
+            _uiState.update {
+                it.copy(
+                    followGroup = group,
+                    rawItems = cached.rawItems,
+                    items = applyBlacklist(cached.rawItems),
+                    page = cached.page,
+                    hasMore = cached.hasMore,
+                    isLoading = false,
+                    isLoadingMore = false,
+                    error = null
+                )
+            }
+            return
+        }
         _uiState.update {
             it.copy(
                 followGroup = group,
@@ -182,12 +262,12 @@ class FeedsViewModel(
                 items = emptyList(),
                 page = 1,
                 hasMore = true,
-                isLoading = false,
+                isLoading = tab == FeedTab.TIMELINE,
                 isLoadingMore = false,
                 error = null
             )
         }
-        if (_uiState.value.currentTab == FeedTab.TIMELINE) {
+        if (tab == FeedTab.TIMELINE) {
             loadFeeds(refresh = true)
         }
     }
@@ -226,6 +306,7 @@ class FeedsViewModel(
     private fun loadFeeds(refresh: Boolean) {
         val tab = _uiState.value.currentTab
         val group = _uiState.value.followGroup
+        val key = cacheKeyOf(tab, group)
         if (tab == FeedTab.TIMELINE && !_uiState.value.isLoggedIn) {
             loadJob?.cancel()
             _uiState.update {
@@ -279,11 +360,17 @@ class FeedsViewModel(
                         (state.rawItems + newItems).distinctBy { it.id }
                     }
                     val addedNew = refresh || combinedRaw.size > state.rawItems.size
+                    val nextHasMore = newItems.isNotEmpty() && addedNew
+                    channelCache[key] = ChannelSnapshot(
+                        rawItems = combinedRaw,
+                        page = targetPage,
+                        hasMore = nextHasMore
+                    )
                     state.copy(
                         rawItems = combinedRaw,
                         items = applyBlacklist(combinedRaw),
                         page = targetPage,
-                        hasMore = newItems.isNotEmpty() && addedNew,
+                        hasMore = nextHasMore,
                         isLoading = false,
                         isLoadingMore = false,
                         error = null

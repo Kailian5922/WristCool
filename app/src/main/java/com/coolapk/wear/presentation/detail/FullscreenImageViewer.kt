@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.AnimatedPage
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.HorizontalPagerScaffold
 import androidx.wear.compose.material3.Icon
@@ -51,6 +50,7 @@ import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImagePainter
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.RotaryScrollLock
 
 /**
@@ -234,7 +234,7 @@ private fun ZoomableImagePage(
             when (painter.state) {
                 is AsyncImagePainter.State.Loading -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.size(30.dp))
+                        ExpressiveLoadingIndicator(size = 40.dp, contained = true)
                     }
                 }
                 is AsyncImagePainter.State.Error -> {

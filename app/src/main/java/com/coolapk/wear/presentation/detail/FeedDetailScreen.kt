@@ -60,7 +60,6 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.CardDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.FilledTonalButton
@@ -81,6 +80,7 @@ import com.coolapk.wear.data.model.VoteInfo
 import com.coolapk.wear.data.util.ImageSaver
 import com.coolapk.wear.data.util.TextSanitizer
 import com.coolapk.wear.presentation.components.CommentCard
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.SubReplyUiState
@@ -769,7 +769,7 @@ fun FeedDetailScreen(
                                     .padding(8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                ExpressiveLoadingIndicator(size = 20.dp, contained = false)
                             }
                         }
                     } else if (uiState.hasMoreComments && uiState.comments.isNotEmpty()) {
