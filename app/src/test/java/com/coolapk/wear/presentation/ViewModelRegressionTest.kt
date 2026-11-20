@@ -21,8 +21,10 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -56,18 +58,30 @@ class ViewModelRegressionTest {
         Dispatchers.resetMain()
     }
 
+    private fun waitUntil(timeoutMs: Long = 3_000L, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            if (condition()) return
+            Thread.sleep(20)
+        }
+        testDispatcher.scheduler.advanceUntilIdle()
+    }
+
     @Test
     fun `UserProfileViewModel does not re-fetch when hasMore is false`() = runTest(testDispatcher) {
-        // init triggers getUserProfile + getUserFeeds(page=1)
-        server.enqueue(MockResponse().setBody("""{"data":{"uid":"2","username":"Bob"}}"""))
-        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/v6/user/profile") -> MockResponse().setBody("""{"data":{"uid":"2","username":"Bob"}}""")
+                    else -> MockResponse().setBody("""{"data":[]}""")
+                }
+            }
+        }
 
         val vm = UserProfileViewModel(api, uid = "2")
-        // Wait for IO requests to settle
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { server.requestCount >= 2 && !vm.uiState.value.isLoadingProfile && !vm.uiState.value.isLoadingFeeds }
 
         val initialRequestCount = server.requestCount
         assertFalse("hasMore should be false after empty page", vm.uiState.value.hasMore)
@@ -95,27 +109,26 @@ class ViewModelRegressionTest {
             isLiked = false,
             isFavorite = true
         )
-        // init parallel calls: detail + replies
-        server.enqueue(
-            MockResponse().setBody(
-                """{"data":{"entityType":"feed","id":"500","uid":"2","username":"Author","message":"Body","likenum":10,"is_like":0,"is_favorite":1}}"""
-            )
-        )
-        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/v6/feed/detail") -> MockResponse().setBody(
+                        """{"data":{"entityType":"feed","id":"500","uid":"2","username":"Author","message":"Body","likenum":10,"is_like":0,"is_favorite":1}}"""
+                    )
+                    path.startsWith("/v6/feed/replyList") -> MockResponse().setBody("""{"data":[]}""")
+                    path.startsWith("/v6/feed/like") -> MockResponse().setBody("""{"status":-1,"message":"请先登录"}""")
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
 
         val vm = FeedDetailViewModel(api, feedId = "500", initialFeed = initial)
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { server.requestCount >= 2 && !vm.uiState.value.isLoading && !vm.uiState.value.isLoadingComments }
 
         // Toggle like -> server returns business error
-        server.enqueue(MockResponse().setBody("""{"status":-1,"message":"请先登录"}"""))
         vm.toggleLike()
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { !vm.uiState.value.isTogglingLike && vm.uiState.value.actionMessage != null }
 
         assertFalse(vm.uiState.value.isLiked)
         assertEquals(10, vm.uiState.value.likeCount)
@@ -149,37 +162,34 @@ class ViewModelRegressionTest {
             message = "投票贴",
             vote = initialVote
         )
-        server.enqueue(MockResponse().setResponseCode(500)) // keep initialFeed with vote
-        server.enqueue(
-            MockResponse().setBody(
-                """{"data":[{"id":"c1","uid":"9","username":"Tester","message":"好贴","likenum":3,"is_like":0}]}"""
-            )
-        )
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/v6/feed/detail") -> MockResponse().setResponseCode(500)
+                    path.startsWith("/v6/feed/replyList") -> MockResponse().setBody(
+                        """{"data":[{"id":"c1","uid":"9","username":"Tester","message":"好贴","likenum":3,"is_like":0}]}"""
+                    )
+                    path.startsWith("/v6/feed/likeReply") -> MockResponse().setBody("""{"status":-1,"message":"未登录"}""")
+                    path.startsWith("/v6/vote/createUserVote") -> MockResponse().setBody("""{"data":1}""")
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
 
         val vm = FeedDetailViewModel(api, feedId = "600", initialFeed = initial)
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { vm.uiState.value.comments.size == 1 }
         assertEquals(1, vm.uiState.value.comments.size)
 
         // Comment like fails -> should rollback
-        server.enqueue(MockResponse().setBody("""{"status":-1,"message":"未登录"}"""))
         vm.toggleCommentLike(vm.uiState.value.comments.first())
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { vm.uiState.value.actionMessage == "未登录" }
         assertFalse(vm.uiState.value.comments.first().isLiked)
         assertEquals(3, vm.uiState.value.comments.first().likeNum)
 
         // Vote succeeds -> increments option and total count
-        server.enqueue(MockResponse().setBody("""{"data":1}"""))
         vm.submitVote(listOf("o1"))
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { vm.uiState.value.feed?.vote?.isVoted == true }
         val updatedVote = vm.uiState.value.feed?.vote!!
         assertTrue(updatedVote.isVoted)
         assertEquals(11, updatedVote.totalVoteNum)
@@ -199,10 +209,7 @@ class ViewModelRegressionTest {
         )
 
         val vm = FavoritesViewModel(api)
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { vm.uiState.value.items.size == 2 }
         assertEquals(2, vm.uiState.value.items.size)
 
         vm.enterMultiSelectMode("f1")
@@ -215,10 +222,7 @@ class ViewModelRegressionTest {
 
         var resultPair: Pair<Int, Int>? = null
         vm.batchDeleteSelected { ok, fail -> resultPair = ok to fail }
-        repeat(10) {
-            Thread.sleep(30)
-            advanceUntilIdle()
-        }
+        waitUntil { resultPair != null }
 
         assertEquals(1 to 1, resultPair)
         assertEquals(listOf("f2"), vm.uiState.value.items.map { it.id })
@@ -230,10 +234,7 @@ class ViewModelRegressionTest {
         server.enqueue(MockResponse().setBody("""{"data":[]}"""))
 
         val vm = SearchViewModel(api)
-        repeat(5) {
-            Thread.sleep(20)
-            advanceUntilIdle()
-        }
+        waitUntil { vm.uiState.value.hotKeywords.isNotEmpty() }
 
         vm.search("WearOS")
         assertTrue(vm.uiState.value.hasSearched)
