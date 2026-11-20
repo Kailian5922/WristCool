@@ -2,18 +2,21 @@ package com.coolapk.wear.companion
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.PersistableBundle
+import android.webkit.CookieManager
+import android.webkit.WebStorage
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,14 +27,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,7 +45,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -55,14 +56,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.json.JSONObject
 import java.util.UUID
 
 val CoolapkGreen = Color(0xFF0DAE62)
@@ -89,31 +87,22 @@ fun CompanionHomeScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("coolapk_companion", Context.MODE_PRIVATE) }
 
-    var cookie by remember { mutableStateOf(prefs.getString("cookie", "") ?: "") }
-    var ddid by remember {
-        var id = prefs.getString("ddid", "") ?: ""
+    var cookie by remember { mutableStateOf(prefs.getString("cookie", "").orEmpty()) }
+    val ddid = remember {
+        var id = prefs.getString("ddid", "").orEmpty()
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString()
             prefs.edit().putString("ddid", id).apply()
         }
-        mutableStateOf(id)
+        id
     }
 
-    val isLoggedIn = cookie.isNotBlank() && cookie.contains("uid=") && cookie.contains("token=")
-    val uid = remember(cookie) {
-        val parts = cookie.split(";")
-        for (part in parts) {
-            val kv = part.trim().split("=")
-            if (kv.size == 2 && kv[0].trim().equals("uid", ignoreCase = true)) {
-                return@remember kv[1].trim()
-            }
-        }
-        ""
-    }
+    val isLoggedIn = remember(cookie) { CookieHelper.isLoggedIn(cookie) }
+    val uid = remember(cookie) { CookieHelper.extractValue(cookie, "uid") }
 
     val loginLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            cookie = prefs.getString("cookie", "") ?: ""
+            cookie = prefs.getString("cookie", "").orEmpty()
         }
     }
 
@@ -123,7 +112,13 @@ fun CompanionHomeScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("酷安手表伴侣", fontWeight = FontWeight.Bold, color = Color.White) },
+                title = {
+                    Text(
+                        text = "酷安手表伴侣 v${BuildConfig.VERSION_NAME}",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = CoolapkGreen)
             )
         }
@@ -139,13 +134,15 @@ fun CompanionHomeScreen() {
             // 登录状态卡片
             Card(
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = if (isLoggedIn) Color(0xFFF0FDF4) else Color(0xFFF9FAFB)),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isLoggedIn) Color(0xFFF0FDF4) else Color(0xFFF9FAFB)
+                ),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (isLoggedIn) Icons.Default.CheckCircle else Icons.Default.Login,
+                            imageVector = if (isLoggedIn) Icons.Default.CheckCircle else Icons.AutoMirrored.Filled.Login,
                             contentDescription = null,
                             tint = if (isLoggedIn) CoolapkGreen else Color.Gray,
                             modifier = Modifier.size(32.dp)
@@ -183,12 +180,23 @@ fun CompanionHomeScreen() {
                             onClick = {
                                 prefs.edit().remove("cookie").apply()
                                 cookie = ""
-                                Toast.makeText(context, "已退出登录", Toast.LENGTH_SHORT).show()
+                                // 同步清理 WebView Cookie 与存储，避免下次登录仍自动复用旧账号会话
+                                runCatching {
+                                    val cm = CookieManager.getInstance()
+                                    cm.removeAllCookies(null)
+                                    cm.flush()
+                                    WebStorage.getInstance().deleteAllData()
+                                }
+                                Toast.makeText(context, "已退出登录并清理网页会话", Toast.LENGTH_SHORT).show()
                             },
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("退出当前账号")
                         }
@@ -196,7 +204,7 @@ fun CompanionHomeScreen() {
                 }
             }
 
-            // 核心功能：复制手表登录信息
+            // 手表端凭据互通
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -212,7 +220,7 @@ fun CompanionHomeScreen() {
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "点击下方按钮生成凭据并复制到手机剪贴板。若手表支持跨端剪贴板，直接在手表设置点【导入手机伴侣登录信息】即可完成登录！",
+                        text = "点击下方按钮生成凭据并复制到手机剪贴板。若手表支持跨端剪贴板，直接在手表【我的】中点【导入伴侣登录信息】即可完成登录！",
                         fontSize = 13.sp,
                         color = Color(0xFF555555),
                         lineHeight = 18.sp
@@ -226,13 +234,21 @@ fun CompanionHomeScreen() {
                                 Toast.makeText(context, "请先登录酷安账号", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
-                            val json = JSONObject().apply {
-                                put("cookie", cookie)
-                                put("ddid", ddid)
-                            }
+                            val payload = CookieHelper.buildCompanionPayload(cookie, ddid)
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("CoolapkWearAuth", json.toString()))
-                            Toast.makeText(context, "凭据已复制！请在手表设置中点击【导入手机伴侣登录信息】", Toast.LENGTH_LONG).show()
+                            val clipData = ClipData.newPlainText("CoolapkWearAuth", payload).apply {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    description.extras = PersistableBundle().apply {
+                                        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                                    }
+                                }
+                            }
+                            clipboard.setPrimaryClip(clipData)
+                            Toast.makeText(
+                                context,
+                                "凭据已复制！请在手表【我的】中点击【导入伴侣登录信息】",
+                                Toast.LENGTH_LONG
+                            ).show()
                         },
                         enabled = isLoggedIn,
                         colors = ButtonDefaults.buttonColors(containerColor = CoolapkGreen),
@@ -263,14 +279,23 @@ fun CompanionHomeScreen() {
                     OutlinedTextField(
                         value = manualCookieText,
                         onValueChange = { manualCookieText = it },
-                        label = { Text("Cookie 原始文本") },
+                        label = { Text("Cookie 原始文本（需包含 uid 与 token）") },
                         modifier = Modifier.fillMaxWidth(),
                         maxLines = 4
                     )
                     Button(
                         onClick = {
-                            prefs.edit().putString("cookie", manualCookieText.trim()).apply()
-                            cookie = manualCookieText.trim()
+                            val normalized = CookieHelper.mergeCookies(manualCookieText)
+                            if (!CookieHelper.isLoggedIn(normalized)) {
+                                Toast.makeText(
+                                    context,
+                                    "Cookie 缺少有效的 uid 或 token 字段，请检查后重试",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@Button
+                            }
+                            prefs.edit().putString("cookie", normalized).apply()
+                            cookie = normalized
                             showManualEdit = false
                             Toast.makeText(context, "Cookie 已更新保存", Toast.LENGTH_SHORT).show()
                         },

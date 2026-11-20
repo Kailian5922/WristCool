@@ -8,11 +8,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -22,16 +27,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
-import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.CompactButton
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.dialog.Alert
+import androidx.wear.compose.material.dialog.Dialog
 import com.coolapk.wear.data.repository.BrowsingHistoryRepository
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
+import com.coolapk.wear.presentation.components.RotaryScrollLock
+import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearListContentPadding
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
@@ -47,6 +56,7 @@ fun HistoryScreen(
     val primaryColor = LocalAppPrimaryColor.current
     val historyList by browsingHistoryRepository.history.collectAsState()
     val listState = rememberScalingLazyListState()
+    var showClearDialog by remember { mutableStateOf(false) }
 
     HorologistScaffold(listState = listState) {
         ScalingLazyColumn(
@@ -83,7 +93,7 @@ fun HistoryScreen(
 
                     if (historyList.isNotEmpty()) {
                         CompactButton(
-                            onClick = { browsingHistoryRepository.clearHistory() },
+                            onClick = { showClearDialog = true },
                             colors = ButtonDefaults.buttonColors(backgroundColor = WearSurfaceVariant),
                             modifier = Modifier.size(26.dp)
                         ) {
@@ -99,17 +109,7 @@ fun HistoryScreen(
             }
 
             if (historyList.isEmpty()) {
-                item {
-                    Text(
-                        text = "暂无浏览记录\n在首页浏览动态后将自动记录在此",
-                        color = Color(0xFF777777),
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp)
-                    )
-                }
+                item { WearEmptyState("暂无浏览记录\n在首页浏览动态后将自动记录在此") }
             }
 
             itemsIndexed(historyList, key = { index, feed -> "${feed.id}_$index" }) { _, feed ->
@@ -117,6 +117,53 @@ fun HistoryScreen(
                     feed = feed,
                     onClick = { onFeedClick(feed.id) },
                     onUserClick = onUserClick
+                )
+            }
+        }
+
+        if (showClearDialog) {
+            RotaryScrollLock()
+            Dialog(
+                showDialog = true,
+                onDismissRequest = { showClearDialog = false }
+            ) {
+                Alert(
+                    title = {
+                        Text(
+                            text = "清空浏览历史",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                    },
+                    content = {
+                        Text(
+                            text = "确认清空全部 ${historyList.size} 条本地记录？",
+                            color = Color(0xFFA0A0A5),
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    },
+                    positiveButton = {
+                        Button(
+                            onClick = {
+                                showClearDialog = false
+                                browsingHistoryRepository.clearHistory()
+                            },
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFC62828))
+                        ) {
+                            Icon(Icons.Rounded.Delete, contentDescription = "确认清空", tint = Color.White)
+                        }
+                    },
+                    negativeButton = {
+                        Button(
+                            onClick = { showClearDialog = false },
+                            colors = ButtonDefaults.buttonColors(backgroundColor = WearSurfaceVariant)
+                        ) {
+                            Icon(Icons.Rounded.Close, contentDescription = "取消", tint = Color.White)
+                        }
+                    }
                 )
             }
         }

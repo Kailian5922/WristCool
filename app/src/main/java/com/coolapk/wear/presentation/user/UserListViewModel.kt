@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.coolapk.wear.data.api.CoolapkApi
 import com.coolapk.wear.data.model.UserCardItem
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class UserListType(val title: String) {
@@ -32,6 +34,8 @@ class UserListViewModel(
     private val _uiState = MutableStateFlow(UserListUiState())
     val uiState: StateFlow<UserListUiState> = _uiState.asStateFlow()
 
+    private var loadJob: Job? = null
+
     init {
         loadUsers(refresh = true)
     }
@@ -41,17 +45,26 @@ class UserListViewModel(
     }
 
     fun loadMore() {
-        if (_uiState.value.isLoading || _uiState.value.isLoadingMore || !_uiState.value.hasMore) return
+        val state = _uiState.value
+        if (state.isLoading || state.isLoadingMore || !state.hasMore) return
         loadUsers(refresh = false)
     }
 
     private fun loadUsers(refresh: Boolean) {
+        if (refresh) {
+            loadJob?.cancel()
+        } else if (loadJob?.isActive == true) {
+            return
+        }
+
         val targetPage = if (refresh) 1 else _uiState.value.page + 1
-        viewModelScope.launch {
-            if (refresh) {
-                _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            } else {
-                _uiState.value = _uiState.value.copy(isLoadingMore = true)
+        loadJob = viewModelScope.launch {
+            _uiState.update { state ->
+                if (refresh) {
+                    state.copy(isLoading = true, isLoadingMore = false, error = null)
+                } else {
+                    state.copy(isLoadingMore = true)
+                }
             }
 
             val result = if (type == UserListType.FOLLOW) {
@@ -61,21 +74,30 @@ class UserListViewModel(
             }
 
             result.onSuccess { newUsers ->
-                val combined = (if (refresh) newUsers else _uiState.value.users + newUsers).distinctBy { it.uid }
-                _uiState.value = _uiState.value.copy(
-                    users = combined,
-                    page = targetPage,
-                    hasMore = newUsers.isNotEmpty(),
-                    isLoading = false,
-                    isLoadingMore = false,
-                    error = null
-                )
+                _uiState.update { state ->
+                    val combined = if (refresh) {
+                        newUsers.distinctBy { it.uid }
+                    } else {
+                        (state.users + newUsers).distinctBy { it.uid }
+                    }
+                    val addedNew = refresh || combined.size > state.users.size
+                    state.copy(
+                        users = combined,
+                        page = targetPage,
+                        hasMore = newUsers.isNotEmpty() && addedNew,
+                        isLoading = false,
+                        isLoadingMore = false,
+                        error = null
+                    )
+                }
             }.onFailure { err ->
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    isLoadingMore = false,
-                    error = err.message ?: "加载用户列表失败"
-                )
+                _uiState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        isLoadingMore = false,
+                        error = err.message ?: "加载用户列表失败"
+                    )
+                }
             }
         }
     }

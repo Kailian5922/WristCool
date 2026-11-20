@@ -80,30 +80,39 @@
 
 ```
 WristCool/
-├── .github/workflows/          # GitHub Actions 自动化 CI/CD 构建
-│   └── release.yml             # 自动打包发布手表与手机版 APK
-├── app/                        # ⌚ 手表端模块 (Wear OS Application)
+├── .github/workflows/          # GitHub Actions 自动化 CI/CD 测试、签名校验与构建
+│   └── release.yml             # 单元测试 + 固定包名校验 + 正式密钥签名发布双端 APK
+├── app/                        # ⌚ 手表端模块 (Wear OS, 包名: com.coolapk.wear)
 │   ├── src/main/java/com/coolapk/wear/
-│   │   ├── MainActivity.kt     # 触控表冠事件拦截与 WearNavigation 路由
+│   │   ├── WristCoolApplication.kt # 全局应用入口（AppContainer + 单例 Coil ImageLoaderFactory）
+│   │   ├── MainActivity.kt         # 触控表冠防重复拦截与 WearNavigation 路由
+│   │   ├── di/AppContainer.kt      # 轻量应用级单例依赖容器
 │   │   ├── data/
 │   │   │   ├── api/
-│   │   │   │   ├── CoolapkApi.kt      # 酷安 REST API 客户端（楼中楼、分页、搜索、频道）
-│   │   │   │   ├── CoolapkAuth.kt     # 动态 V3 Token 核心加解密签名引擎
-│   │   │   │   └── DeviceProfile.kt   # 设备画像与拟态请求头
-│   │   │   ├── model/                 # 领域数据模型
-│   │   │   ├── repository/            # 凭据存储、浏览历史、收藏管理
-│   │   │   └── util/                  # 二维码离线生成、相册保存等
+│   │   │   │   ├── CoolapkApi.kt        # 酷安 REST API 客户端（自动释放连接、业务错误校验）
+│   │   │   │   ├── CoolapkJsonParser.kt # 纯函数 JSON 解析器
+│   │   │   │   ├── CoolapkAuth.kt       # 动态 V3 Token 核心加解密签名引擎
+│   │   │   │   └── DeviceProfile.kt     # 线程安全设备画像与拟态请求头
+│   │   │   ├── model/                   # 领域数据模型与有界 LRU 内存缓存
+│   │   │   ├── receiver/                # 伴侣凭据广播实时同步接收器
+│   │   │   ├── repository/              # 凭据存储、浏览历史、动态状态同步总线
+│   │   │   └── util/                    # CookieParser、TextSanitizer、ImageSaver、二维码生成
 │   │   └── presentation/
-│   │       ├── components/            # 楼中楼卡片、动态卡片、表圈旋转修饰符
-│   │       ├── detail/                # 动态图文详情、多图九宫格、全屏图片预览
-│   │       ├── feeds/                 # 频道切换、下拉阻尼刷新列表
-│   │       ├── me/                    # 个人中心与无缝列表
-│   │       ├── search/                # 动态/用户/话题聚合搜索与热搜词
-│   │       └── theme/                 # 莫奈取色与深色设计规范
+│   │       ├── components/              # CommonWearComponents、楼中楼卡片、动态卡片、表圈调度与锁
+│   │       ├── detail/                  # 动态详情、九宫格、全屏大图预览、回复与二维码浮层
+│   │       ├── feeds/                   # 频道切换、下拉阻尼刷新列表
+│   │       ├── me/                      # 个人中心、收藏夹多选、浏览历史
+│   │       ├── search/                  # 动态/用户/话题聚合搜索与热搜词
+│   │       ├── topic/ & user/           # 话题流、个人主页与关注/粉丝列表
+│   │       └── theme/                   # 莫奈取色与自适应对比度深色规范
+│   ├── src/test/                        # 核心算法、解析器、API 与 ViewModel 单元测试
 │   └── build.gradle.kts
-└── phone/                      # 📱 手机伴侣端模块 (Android Phone Application)
+└── phone/                      # 📱 手机伴侣端模块 (Android Phone, 包名: com.coolapk.wear.companion)
     ├── src/main/java/com/coolapk/wear/companion/
-    │   └── MainActivity.kt     # 伴侣端账号捕获与本地中继下发
+    │   ├── MainActivity.kt     # 伴侣端账号管理、敏感剪贴板保护与退出清理 WebView
+    │   ├── WebLoginActivity.kt # 官方网页授权登录与多域名 Cookie 去重捕获
+    │   └── CookieHelper.kt     # 统一 Cookie 合并与登录状态校验工具
+    ├── src/test/               # CookieHelper 单元测试
     └── build.gradle.kts
 ```
 
@@ -131,11 +140,33 @@ WristCool/
 ## 📦 获取与构建
 
 ### 方式一：直接下载构建好的安装包
-前往项目的 [**GitHub Releases**](https://github.com/Kailian5922/WristCool/releases) 页面，下载每个版本由 GitHub Actions 自动编译输出的两个 APK：
-- `WristCool-wear-*.apk`：安装至智能手表
-- `WristCool-phone-companion-*.apk`：安装至 Android 手机
+前往项目的 [**GitHub Releases**](https://github.com/Kailian5922/WristCool/releases) 页面，下载每个版本由 GitHub Actions 自动编译输出的两个固定包名 APK：
+- `WristCool-wear-*.apk`：包名 `com.coolapk.wear`，安装至智能手表
+- `WristCool-phone-companion-*.apk`：包名 `com.coolapk.wear.companion`，安装至 Android 手机
 
-### 方式二：本地源码构建
+### 方式二：GitHub Actions 固定密钥签名配置（支持无缝覆盖升级）
+在本地使用 JDK 自带的 `keytool` 生成专属正式签名密钥（请妥善保管，**切勿提交到 Git 仓库**）：
+
+```bash
+# 1. 生成正式签名密钥文件 wristcool-release.jks
+keytool -genkeypair -v \
+  -keystore wristcool-release.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -alias wristcool
+
+# 2. 将密钥文件编码为单行 Base64（Linux / macOS）
+base64 -w 0 wristcool-release.jks   # macOS 可用: base64 -i wristcool-release.jks | tr -d '\n'
+```
+
+在 GitHub 仓库的 **Settings → Secrets and variables → Actions → New repository secret** 中添加以下 4 个 Secrets：
+- `RELEASE_KEYSTORE_BASE64`：上一步生成的 Base64 字符串
+- `RELEASE_KEYSTORE_PASSWORD`：Keystore 密码
+- `RELEASE_KEY_ALIAS`：密钥别名（如 `wristcool`）
+- `RELEASE_KEY_PASSWORD`：Key 密码
+
+配置完成后，每次 GitHub Actions 构建都会自动使用该正式密钥签名并校验固定包名（`com.coolapk.wear` / `com.coolapk.wear.companion`），后续版本可直接覆盖升级，无需卸载重装。
+
+### 方式三：本地源码构建与测试
 确保本地环境已安装 **JDK 17** 与 Android SDK (API 34)：
 
 ```bash
@@ -143,11 +174,19 @@ WristCool/
 git clone https://github.com/Kailian5922/WristCool.git
 cd WristCool
 
-# 编译手表版 Release APK
-./gradlew :app:assembleRelease
+# 运行双端单元测试
+./gradlew :app:testDebugUnitTest :phone:testDebugUnitTest
 
-# 编译手机伴侣版 Release APK
-./gradlew :phone:assembleRelease
+# 编译手表版与手机伴侣版 Release APK
+./gradlew :app:assembleRelease :phone:assembleRelease
+```
+
+若需在本地使用正式密钥签名，可在项目根目录新建（已被 `.gitignore` 忽略的）`keystore.properties`：
+```properties
+storeFile=wristcool-release.jks
+storePassword=你的Keystore密码
+keyAlias=wristcool
+keyPassword=你的Key密码
 ```
 
 通过 ADB 将手表端 APK 无线推送到手表：

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.foundation.focusable
@@ -20,69 +21,153 @@ import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.wear.compose.foundation.lazy.ScalingLazyListState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * 全局旋转表圈/表冠事件调度器。
- * 针对三星 Galaxy Watch 4/5/6/7 等 One UI Watch 设备，
- * 在 Compose 焦点丢失或由 Activity 接收到 MotionEvent.AXIS_SCROLL 时，
- * 能够无缝将表圈物理滚动量派发到当前屏幕的活跃列表中，并触发机械刻度物理震动反馈。
+ * 1. 全方法线程安全（synchronized）；
+ * 2. 支持按事件时间戳去重，避免 Activity 与 Compose 双重消费同一次旋转；
+ * 3. 支持通过 [RotaryScrollLock] 在全屏大图/弹窗打开时锁定底层列表滚动；
+ * 4. 合并连续高频旋转量，避免快速转动表圈时堆积大量并发协程。
  */
 object RotaryDispatcher {
+    private val lock = Any()
     private val consumers = mutableListOf<suspend (Float) -> Unit>()
+    private var lastHandledEventTimeMs: Long = -1L
+
+    private var pendingPixels: Float = 0f
+    private var isDraining: Boolean = false
 
     val activeScrollBy: (suspend (Float) -> Unit)?
-        get() = consumers.lastOrNull()
+        get() = synchronized(lock) { consumers.lastOrNull() }
 
     fun push(consumer: suspend (Float) -> Unit) {
-        synchronized(consumers) {
+        synchronized(lock) {
             consumers.remove(consumer)
             consumers.add(consumer)
         }
     }
 
     fun remove(consumer: suspend (Float) -> Unit) {
-        synchronized(consumers) {
+        synchronized(lock) {
             consumers.remove(consumer)
         }
     }
 
     /**
+     * 标记某次旋转事件已处理；若同一时间戳已被处理则返回 false，防止双重触发。
+     */
+    fun tryClaimEvent(eventTimeMs: Long): Boolean {
+        if (eventTimeMs <= 0L) return true
+        return synchronized(lock) {
+            if (eventTimeMs == lastHandledEventTimeMs) {
+                false
+            } else {
+                lastHandledEventTimeMs = eventTimeMs
+                true
+            }
+        }
+    }
+
+    /**
+     * 将旋转滚动像素累加并按序派发给当前栈顶消费者，避免高频旋转并发抢占。
+     */
+    fun dispatchScroll(scope: CoroutineScope, pixels: Float) {
+        if (pixels == 0f) return
+        val shouldStartDrain = synchronized(lock) {
+            pendingPixels += pixels
+            if (!isDraining) {
+                isDraining = true
+                true
+            } else {
+                false
+            }
+        }
+        if (!shouldStartDrain) return
+
+        scope.launch {
+            try {
+                while (true) {
+                    val (delta, consumer) = synchronized(lock) {
+                        val d = pendingPixels
+                        pendingPixels = 0f
+                        if (d == 0f) {
+                            isDraining = false
+                            return@launch
+                        }
+                        d to consumers.lastOrNull()
+                    }
+                    try {
+                        consumer?.invoke(delta)
+                    } catch (_: Exception) {
+                        // 忽略页面销毁期间的滚动取消异常
+                    }
+                }
+            } finally {
+                synchronized(lock) {
+                    isDraining = false
+                }
+            }
+        }
+    }
+
+    /**
      * 触发机械表圈旋转刻度震动（Tick Haptic Feedback）。
-     * 支持三星 One UI Watch 与原生 Wear OS 触感引擎。
      */
     fun triggerTick(context: Context, view: View? = null) {
         try {
-            // 优先通过 View 派发 Wear OS 旋转表圈触感刻度
-            val tickFlag = if (Build.VERSION.SDK_INT >= 34) {
-                18 // HapticFeedbackConstants.ROTARY_SCROLL_TICK
+            val tickFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                18 // HapticFeedbackConstants.ROTARY_SCROLL_TICK (public in API 35, available from API 34)
             } else {
                 HapticFeedbackConstants.CLOCK_TICK
             }
-            val performed = view?.performHapticFeedback(
-                tickFlag,
-                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING or HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
-            ) ?: false
+            val performed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                view?.performHapticFeedback(tickFlag) ?: false
+            } else {
+                @Suppress("DEPRECATION")
+                view?.performHapticFeedback(
+                    tickFlag,
+                    HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING or HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
+                ) ?: false
+            }
 
             if (!performed) {
-                val vibrator = context.getSystemService(Vibrator::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    context.getSystemService(VibratorManager::class.java)?.defaultVibrator
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator?.vibrate(10)
+                    context.getSystemService(Vibrator::class.java)
                 }
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
+    }
+}
+
+/**
+ * 模态浮层（如全屏大图预览、确认弹窗、手动输入页）打开时使用，
+ * 拦截表圈旋转事件，防止旋转表圈误滚底层列表。
+ */
+@Composable
+fun RotaryScrollLock(enabled: Boolean = true) {
+    if (!enabled) return
+    val blocker: suspend (Float) -> Unit = remember { { _ -> } }
+    DisposableEffect(blocker) {
+        RotaryDispatcher.push(blocker)
+        onDispose {
+            RotaryDispatcher.remove(blocker)
+        }
     }
 }
 
 /**
  * 专为 Wear OS 表冠旋钮与旋转表圈设计的双重处理扩展。
- * 1. 采用后进先出栈（LIFO）自动挂载至 RotaryDispatcher，返回上一页时自动回滚恢复上一页的滚动响应。
- * 2. 内部提供 FocusRequester 自动重试延迟获焦，配合 Compose onRotaryScrollEvent，双重保障。
- * 3. 伴随滚动派发真实表圈机械刻度震动。
+ * 1. 采用 LIFO 栈自动挂载至 [RotaryDispatcher]，返回上一页时自动恢复上一页滚动；
+ * 2. 延迟请求 Compose 焦点并配合时间戳去重，兼容三星 Galaxy Watch 与原生 Wear OS；
+ * 3. 伴随滚动派发表圈机械刻度震动反馈。
  */
 @Composable
 fun Modifier.rotaryEventHandler(
@@ -96,34 +181,27 @@ fun Modifier.rotaryEventHandler(
         { pixels -> listState.scrollBy(pixels) }
     }
 
-    // 绑定至全局调度器栈
-    DisposableEffect(listState) {
+    DisposableEffect(scrollConsumer) {
         RotaryDispatcher.push(scrollConsumer)
         onDispose {
             RotaryDispatcher.remove(scrollConsumer)
         }
     }
 
-    // 延迟请求焦点，确保列表在挂载至 Window 后成功获取表冠事件，退出下级页面返回时依然生效
-    LaunchedEffect(listState) {
-        RotaryDispatcher.push(scrollConsumer)
+    LaunchedEffect(focusRequester) {
         delay(100)
-        try {
-            focusRequester.requestFocus()
-        } catch (_: Exception) {}
-        delay(300)
-        try {
-            focusRequester.requestFocus()
-        } catch (_: Exception) {}
+        runCatching { focusRequester.requestFocus() }
+        delay(250)
+        runCatching { focusRequester.requestFocus() }
     }
 
     return this
         .focusRequester(focusRequester)
         .focusable()
         .onRotaryScrollEvent { event ->
-            coroutineScope.launch {
+            if (RotaryDispatcher.tryClaimEvent(event.uptimeMillis)) {
                 RotaryDispatcher.triggerTick(context, view)
-                listState.scrollBy(event.verticalScrollPixels)
+                RotaryDispatcher.dispatchScroll(coroutineScope, event.verticalScrollPixels)
             }
             true
         }
