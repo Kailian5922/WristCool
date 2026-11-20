@@ -5,13 +5,19 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 object QrCodeGenerator {
     /**
-     * 生成高清黑白二维码 Bitmap，用于手表端展示供手机扫码打开
+     * 在后台线程生成高清黑白二维码 Bitmap，避免阻塞 Wear OS 主线程渲染。
      */
-    fun generate(content: String, size: Int = 360): Bitmap? {
-        if (content.isBlank()) return null
+    suspend fun generate(content: String, size: Int = 360): Bitmap? = withContext(Dispatchers.Default) {
+        generateSync(content, size)
+    }
+
+    fun generateSync(content: String, size: Int = 360): Bitmap? {
+        if (content.isBlank() || size <= 0) return null
         return try {
             val hints = mapOf(
                 EncodeHintType.CHARACTER_SET to "UTF-8",

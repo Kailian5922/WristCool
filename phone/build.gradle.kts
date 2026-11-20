@@ -1,19 +1,44 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+fun resolveSigningProp(envName: String, propName: String): String? {
+    return System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: keystoreProperties.getProperty(propName)?.takeIf { it.isNotBlank() }
+}
+
+val releaseStorePath = resolveSigningProp("RELEASE_KEYSTORE_PATH", "storeFile")
+val releaseStorePassword = resolveSigningProp("RELEASE_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = resolveSigningProp("RELEASE_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = resolveSigningProp("RELEASE_KEY_PASSWORD", "keyPassword")
+val releaseStoreFile = releaseStorePath?.let { rootProject.file(it) }
+val hasReleaseSigning = releaseStoreFile?.exists() == true &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+
 android {
     namespace = "com.coolapk.wear.companion"
     compileSdk = 34
 
     defaultConfig {
+        // 固定包名，确保后续覆盖升级无缝兼容
         applicationId = "com.coolapk.wear.companion"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     compileOptions {
@@ -21,19 +46,52 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn("WristCool :phone release keystore not configured; falling back to debug signing.")
+                signingConfigs.getByName("debug")
+            }
         }
+        debug {
+            applicationIdSuffix = ".debug"
+        }
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -47,7 +105,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.mindrot:jbcrypt:0.4")
-    implementation("io.coil-kt:coil-compose:2.6.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

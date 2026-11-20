@@ -3,6 +3,7 @@ package com.coolapk.wear.presentation.me
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,25 +17,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
-import androidx.compose.material.icons.rounded.PersonAdd
-import androidx.compose.ui.graphics.vector.ImageVector
-import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,31 +41,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Text
-import coil.compose.AsyncImage
-import com.coolapk.wear.data.model.AuthCredentials
+import com.coolapk.wear.BuildConfig
 import com.coolapk.wear.presentation.components.HorologistScaffold
+import com.coolapk.wear.presentation.components.RotaryScrollLock
+import com.coolapk.wear.presentation.components.UserAvatar
 import com.coolapk.wear.presentation.components.WearListContentPadding
 import com.coolapk.wear.presentation.components.rotaryEventHandler
+import com.coolapk.wear.presentation.theme.LocalAppOnPrimaryColor
+import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
+import com.coolapk.wear.presentation.theme.ThemeManager
 import com.coolapk.wear.presentation.theme.WearSurface
 import com.coolapk.wear.presentation.theme.WearSurfaceVariant
-import com.coolapk.wear.presentation.theme.ThemeManager
 
 @Composable
 fun MeScreen(
@@ -82,13 +79,25 @@ fun MeScreen(
     onBack: () -> Unit
 ) {
     val primaryColor = LocalAppPrimaryColor.current
+    val onPrimaryColor = LocalAppOnPrimaryColor.current
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0, initialCenterItemScrollOffset = 0)
     val context = LocalContext.current
     var isManualInputOpen by remember { mutableStateOf(false) }
     var manualInputText by remember { mutableStateOf("") }
 
+    // 统一弹出导入、清理缓存、退出登录等反馈消息
+    LaunchedEffect(uiState.message) {
+        val msg = uiState.message
+        if (!msg.isNullOrBlank()) {
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            viewModel.clearMessage()
+        }
+    }
+
     if (isManualInputOpen) {
+        BackHandler { isManualInputOpen = false }
+        RotaryScrollLock()
         HorologistScaffold(showTimeText = false) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -146,7 +155,7 @@ fun MeScreen(
                             viewModel.importFromClipboard(manualInputText)
                             isManualInputOpen = false
                         },
-                        label = { Text("保存", fontSize = 11.sp) },
+                        label = { Text("保存", fontSize = 11.sp, color = onPrimaryColor) },
                         colors = ChipDefaults.chipColors(backgroundColor = primaryColor),
                         modifier = Modifier.weight(1f)
                     )
@@ -165,7 +174,7 @@ fun MeScreen(
                 .fillMaxSize()
                 .rotaryEventHandler(listState)
         ) {
-            // 顶部个人信息卡片（对齐酷安手机端）
+            // 顶部个人信息卡片
             item {
                 Box(
                     modifier = Modifier
@@ -176,6 +185,7 @@ fun MeScreen(
                 ) {
                     if (uiState.credentials.isLoggedIn) {
                         val profile = uiState.userProfile
+                        val effectiveUid = profile?.uid?.takeIf { it.isNotBlank() } ?: uiState.credentials.uid
                         val displayName = when {
                             !profile?.username.isNullOrBlank() -> profile!!.username
                             uiState.credentials.username.isNotBlank() -> uiState.credentials.username
@@ -188,7 +198,7 @@ fun MeScreen(
                         }
                         val bioText = when {
                             !profile?.bio.isNullOrBlank() -> profile!!.bio
-                            uiState.credentials.uid.isNotBlank() -> "UID: ${uiState.credentials.uid}"
+                            effectiveUid.isNotBlank() -> "UID: $effectiveUid"
                             else -> "已登录"
                         }
 
@@ -198,28 +208,16 @@ fun MeScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        if (uiState.credentials.uid.isNotBlank()) {
-                                            onUserClick(uiState.credentials.uid)
+                                        if (effectiveUid.isNotBlank()) {
+                                            onUserClick(effectiveUid)
                                         }
                                     }
                             ) {
-                                if (avatarUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = avatarUrl,
-                                        contentDescription = "头像",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .clip(CircleShape)
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .clip(CircleShape)
-                                            .background(primaryColor)
-                                    )
-                                }
+                                UserAvatar(
+                                    avatarUrl = avatarUrl,
+                                    contentDescription = "头像",
+                                    size = 34.dp
+                                )
 
                                 Spacer(modifier = Modifier.width(8.dp))
 
@@ -231,7 +229,8 @@ fun MeScreen(
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
                                         )
 
                                         if (profile != null && profile.level > 0) {
@@ -246,7 +245,9 @@ fun MeScreen(
                                                     text = "Lv.${profile.level}",
                                                     color = primaryColor,
                                                     fontSize = 8.sp,
-                                                    fontWeight = FontWeight.Bold
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false
                                                 )
                                             }
                                         }
@@ -262,7 +263,6 @@ fun MeScreen(
                                 }
                             }
 
-                            // 统计数据：动态、关注、粉丝（三列等宽精致排版，均支持直接点击跳转）
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
                                 modifier = Modifier
@@ -273,82 +273,36 @@ fun MeScreen(
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            if (uiState.credentials.uid.isNotBlank()) {
-                                                onUserClick(uiState.credentials.uid)
-                                            }
-                                        }
-                                        .padding(vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = "${profile?.feedNum ?: 0}",
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(text = "动态", color = Color(0xFFA0A0A5), fontSize = 9.sp)
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .width(1.dp)
-                                        .height(18.dp)
-                                        .background(Color(0xFF3A3A3C))
+                                ProfileStatCell(
+                                    value = "${profile?.feedNum ?: 0}",
+                                    label = "动态",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        if (effectiveUid.isNotBlank()) onUserClick(effectiveUid)
+                                    }
                                 )
 
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            if (uiState.credentials.uid.isNotBlank()) {
-                                                onFollowClick(uiState.credentials.uid)
-                                            }
-                                        }
-                                        .padding(vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = "${profile?.followNum ?: 0}",
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(text = "关注", color = Color(0xFFA0A0A5), fontSize = 9.sp)
-                                }
+                                StatDivider()
 
-                                Box(
-                                    modifier = Modifier
-                                        .width(1.dp)
-                                        .height(18.dp)
-                                        .background(Color(0xFF3A3A3C))
+                                ProfileStatCell(
+                                    value = "${profile?.followNum ?: 0}",
+                                    label = "关注",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        if (effectiveUid.isNotBlank()) onFollowClick(effectiveUid)
+                                    }
                                 )
 
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            if (uiState.credentials.uid.isNotBlank()) {
-                                                onFansClick(uiState.credentials.uid)
-                                            }
-                                        }
-                                        .padding(vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = "${profile?.fansNum ?: 0}",
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(text = "粉丝", color = Color(0xFFA0A0A5), fontSize = 9.sp)
-                                }
+                                StatDivider()
+
+                                ProfileStatCell(
+                                    value = "${profile?.fansNum ?: 0}",
+                                    label = "粉丝",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        if (effectiveUid.isNotBlank()) onFansClick(effectiveUid)
+                                    }
+                                )
                             }
                         }
                     } else {
@@ -378,7 +332,7 @@ fun MeScreen(
                 }
             }
 
-            // 功能选项区（统一圆角容器，极致紧凑，消除空隙）
+            // 功能选项区
             item {
                 Column(
                     modifier = Modifier
@@ -386,7 +340,6 @@ fun MeScreen(
                         .clip(RoundedCornerShape(14.dp))
                         .background(WearSurface)
                 ) {
-                    // 我的收藏
                     if (uiState.credentials.isLoggedIn) {
                         MeListRow(
                             icon = Icons.Rounded.Bookmark,
@@ -397,7 +350,6 @@ fun MeScreen(
                         MeDivider()
                     }
 
-                    // 浏览历史
                     MeListRow(
                         icon = Icons.Rounded.History,
                         iconTint = Color(0xFF64B5F6),
@@ -407,7 +359,6 @@ fun MeScreen(
                     )
                     MeDivider()
 
-                    // 凭据导入 / 同步
                     MeListRow(
                         icon = Icons.Rounded.ContentPaste,
                         iconTint = primaryColor,
@@ -420,21 +371,21 @@ fun MeScreen(
                                     modifier = Modifier.size(12.dp)
                                 )
                             }
-                        } else null,
+                        } else {
+                            null
+                        },
                         onClick = {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                            if (clipboard != null && clipboard.hasPrimaryClip()) {
-                                val clipData = clipboard.primaryClip
-                                val text = clipData?.getItemAt(0)?.coerceToText(context)?.toString() ?: ""
-                                viewModel.importFromClipboard(text)
+                            val text = if (clipboard != null && clipboard.hasPrimaryClip()) {
+                                clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                             } else {
-                                viewModel.importFromClipboard("")
+                                ""
                             }
+                            viewModel.importFromClipboard(text)
                         }
                     )
                     MeDivider()
 
-                    // 键盘手动输入
                     MeListRow(
                         icon = Icons.Rounded.Edit,
                         iconTint = Color.White,
@@ -446,7 +397,6 @@ fun MeScreen(
                     )
                     MeDivider()
 
-                    // 主题配色切换（酷安绿 / 动态莫奈取色）
                     val useMonet by ThemeManager.useMonet.collectAsState()
                     MeListRow(
                         icon = Icons.Rounded.Palette,
@@ -461,20 +411,23 @@ fun MeScreen(
                             ) {
                                 Text(
                                     text = if (useMonet) "开启" else "默认绿",
-                                    color = if (useMonet) Color.Black else Color(0xFFA0A0A5),
+                                    color = if (useMonet) onPrimaryColor else Color(0xFFA0A0A5),
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         },
                         onClick = {
-                            ThemeManager.toggleMonet(context)
-                            Toast.makeText(context, if (!useMonet) "已开启系统莫奈取色" else "已切换为默认酷安绿", Toast.LENGTH_SHORT).show()
+                            val enabled = ThemeManager.toggleMonet(context)
+                            Toast.makeText(
+                                context,
+                                if (enabled) "已开启系统莫奈取色" else "已切换为默认酷安绿",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     )
                     MeDivider()
 
-                    // 清理缓存
                     MeListRow(
                         icon = Icons.Rounded.CleaningServices,
                         iconTint = Color(0xFF81C784),
@@ -482,7 +435,6 @@ fun MeScreen(
                         onClick = { viewModel.clearCache(context) }
                     )
 
-                    // 退出登录
                     if (uiState.credentials.isLoggedIn) {
                         MeDivider()
                         MeListRow(
@@ -495,7 +447,7 @@ fun MeScreen(
                 }
             }
 
-            // 关于卡片
+            // 关于卡片（动态展示 BuildConfig.VERSION_NAME）
             item {
                 Box(
                     modifier = Modifier
@@ -509,7 +461,7 @@ fun MeScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "酷安 Wear v1.0.0",
+                            text = "酷安 Wear v${BuildConfig.VERSION_NAME}",
                             color = Color.White,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
@@ -525,6 +477,40 @@ fun MeScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ProfileStatCell(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp)
+    ) {
+        Text(
+            text = value,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(text = label, color = Color(0xFFA0A0A5), fontSize = 9.sp)
+    }
+}
+
+@Composable
+private fun StatDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(18.dp)
+            .background(Color(0xFF3A3A3C))
+    )
 }
 
 @Composable

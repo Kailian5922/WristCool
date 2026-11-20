@@ -1,10 +1,8 @@
 package com.coolapk.wear.presentation.me
 
 import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,42 +20,39 @@ import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
-import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Card
 import androidx.wear.compose.material.CardDefaults
+import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.CompactButton
 import androidx.wear.compose.material.CompactChip
-import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Text
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
+import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearEmptyState
+import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearListContentPadding
+import com.coolapk.wear.presentation.components.WearLoadMoreFooter
+import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
 import com.coolapk.wear.presentation.theme.WearSurface
@@ -75,14 +70,17 @@ fun FavoritesScreen(
     val listState = rememberScalingLazyListState()
     val context = LocalContext.current
 
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
-            .collect { lastIndex ->
-                if (lastIndex != null && lastIndex >= uiState.items.size - 2) {
-                    viewModel.loadMore()
-                }
-            }
+    BackHandler(enabled = uiState.isMultiSelectMode) {
+        viewModel.exitMultiSelectMode()
     }
+
+    LoadMoreEffect(
+        listState = listState,
+        itemCount = uiState.items.size,
+        hasMore = uiState.hasMore,
+        isLoading = uiState.isLoading || uiState.isLoadingMore,
+        onLoadMore = { viewModel.loadMore() }
+    )
 
     HorologistScaffold(listState = listState) {
         ScalingLazyColumn(
@@ -93,7 +91,6 @@ fun FavoritesScreen(
                 .fillMaxSize()
                 .rotaryEventHandler(listState)
         ) {
-            // 顶部标题与多选工具栏
             item {
                 if (!uiState.isMultiSelectMode) {
                     Row(
@@ -132,7 +129,11 @@ fun FavoritesScreen(
                         }
                     }
                 } else {
-                    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp)
+                    ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -181,9 +182,15 @@ fun FavoritesScreen(
                         if (uiState.selectedIds.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(4.dp))
                             CompactChip(
+                                enabled = !uiState.isBatchDeleting,
                                 onClick = {
-                                    viewModel.batchDeleteSelected { count ->
-                                        Toast.makeText(context, "已取消收藏 $count 条动态", Toast.LENGTH_SHORT).show()
+                                    viewModel.batchDeleteSelected { succeeded, failed ->
+                                        val msg = when {
+                                            failed == 0 -> "已取消收藏 $succeeded 条动态"
+                                            succeeded == 0 -> "取消收藏失败，请检查网络或登录状态"
+                                            else -> "已取消 $succeeded 条，$failed 条失败"
+                                        }
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 label = {
@@ -218,91 +225,34 @@ fun FavoritesScreen(
             }
 
             if (uiState.isLoading && uiState.items.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(100.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            indicatorColor = primaryColor,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
+                item { WearLoadingPlaceholder() }
             }
 
             if (uiState.error != null && uiState.items.isEmpty()) {
                 item {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Text(
-                            text = uiState.error ?: "",
-                            color = Color(0xFFA0A0A5),
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = { viewModel.refresh() },
-                            colors = ButtonDefaults.buttonColors(backgroundColor = primaryColor),
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "重试",
-                                tint = Color.White
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (uiState.items.isEmpty() && !uiState.isLoading && uiState.error == null) {
-                item {
-                    Text(
-                        text = "暂无收藏动态\n在动态详情中点击“收藏”即可添加",
-                        color = Color(0xFF777777),
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
+                    WearErrorRetry(
+                        message = uiState.error.orEmpty(),
+                        onRetry = { viewModel.refresh() }
                     )
                 }
             }
 
+            if (uiState.items.isEmpty() && !uiState.isLoading && uiState.error == null) {
+                item { WearEmptyState("暂无收藏动态\n在动态详情中点击“收藏”即可添加") }
+            }
+
             if (!uiState.isMultiSelectMode) {
-                // 普通浏览模式：支持长按触发批量多选
                 itemsIndexed(uiState.items, key = { index, feed -> "${feed.id}_$index" }) { _, feed ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pointerInput(feed.id) {
-                                detectTapGestures(
-                                    onTap = { onFeedClick(feed.id) },
-                                    onLongPress = {
-                                        viewModel.enterMultiSelectMode(feed.id)
-                                    }
-                                )
-                            }
-                    ) {
-                        FeedCard(
-                            feed = feed,
-                            onClick = { onFeedClick(feed.id) },
-                            onUserClick = onUserClick
-                        )
-                    }
+                    FeedCard(
+                        feed = feed,
+                        onClick = { onFeedClick(feed.id) },
+                        onLongClick = { viewModel.enterMultiSelectMode(feed.id) },
+                        onUserClick = onUserClick
+                    )
                 }
             } else {
-                // 批量多选模式：点击切换勾选
                 itemsIndexed(uiState.items, key = { index, feed -> "select_${feed.id}_$index" }) { _, feed ->
-                    val isSelected = uiState.selectedIds.contains(feed.id)
+                    val isSelected = feed.id in uiState.selectedIds
                     Card(
                         onClick = { viewModel.toggleSelection(feed.id) },
                         modifier = Modifier
@@ -349,19 +299,14 @@ fun FavoritesScreen(
                 }
             }
 
-            if (uiState.isLoadingMore) {
+            if (uiState.isLoadingMore || (!uiState.hasMore && uiState.items.isNotEmpty())) {
                 item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            indicatorColor = primaryColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                    WearLoadMoreFooter(
+                        isLoadingMore = uiState.isLoadingMore,
+                        hasMore = uiState.hasMore,
+                        hasItems = uiState.items.isNotEmpty(),
+                        endText = "已展示全部收藏"
+                    )
                 }
             }
         }

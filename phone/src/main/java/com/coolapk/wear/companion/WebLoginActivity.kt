@@ -14,10 +14,12 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 
 class WebLoginActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
+    private var hasCompleted = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,7 +33,6 @@ class WebLoginActivity : ComponentActivity() {
             )
         }
 
-        // 顶部工具栏
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xFF0DAE62.toInt())
@@ -54,13 +55,14 @@ class WebLoginActivity : ComponentActivity() {
             setBackgroundColor(Color.WHITE)
             setTextColor(0xFF0DAE62.toInt())
             setOnClickListener {
-                if (checkAndSaveCookies()) {
-                    Toast.makeText(this@WebLoginActivity, "已成功保存登录凭据！", Toast.LENGTH_SHORT).show()
-                    setResult(Activity.RESULT_OK)
-                    finish()
-                } else {
-                    Toast.makeText(this@WebLoginActivity, "尚未检测到登录 Cookie，请先在下方网页完成登录", Toast.LENGTH_SHORT).show()
+                if (tryCaptureAndFinish(autoDetected = false)) {
+                    return@setOnClickListener
                 }
+                Toast.makeText(
+                    this@WebLoginActivity,
+                    "尚未检测到完整登录 Cookie（需包含 uid 与 token），请先完成登录",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
 
@@ -68,7 +70,6 @@ class WebLoginActivity : ComponentActivity() {
         toolbar.addView(doneButton)
         rootLayout.addView(toolbar)
 
-        // WebView 配置
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
 
@@ -88,11 +89,7 @@ class WebLoginActivity : ComponentActivity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    if (checkAndSaveCookies()) {
-                        Toast.makeText(this@WebLoginActivity, "检测到登录成功，已自动保存！", Toast.LENGTH_SHORT).show()
-                        setResult(Activity.RESULT_OK)
-                        finish()
-                    }
+                    tryCaptureAndFinish(autoDetected = true)
                 }
             }
         }
@@ -100,26 +97,49 @@ class WebLoginActivity : ComponentActivity() {
         rootLayout.addView(webView)
         setContentView(rootLayout)
 
-        // 加载酷安官方登录页
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (::webView.isInitialized && webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    finish()
+                }
+            }
+        })
+
         webView.loadUrl("https://account.coolapk.com/auth/login?type=coolapk")
     }
 
-    private fun checkAndSaveCookies(): Boolean {
+    private fun tryCaptureAndFinish(autoDetected: Boolean): Boolean {
+        if (hasCompleted) return true
         val cookieManager = CookieManager.getInstance()
-        val coolapkCookie = cookieManager.getCookie("https://account.coolapk.com") ?: ""
-        val mainCookie = cookieManager.getCookie("https://www.coolapk.com") ?: ""
-        val combined = listOf(coolapkCookie, mainCookie).filter { it.isNotBlank() }.joinToString("; ")
+        cookieManager.flush()
 
-        if (combined.contains("uid=") || combined.contains("token=")) {
+        val accountCookie = cookieManager.getCookie("https://account.coolapk.com").orEmpty()
+        val mainCookie = cookieManager.getCookie("https://www.coolapk.com").orEmpty()
+        val apiCookie = cookieManager.getCookie("https://api.coolapk.com").orEmpty()
+        val merged = CookieHelper.mergeCookies(accountCookie, mainCookie, apiCookie)
+
+        if (CookieHelper.isLoggedIn(merged)) {
+            hasCompleted = true
             val prefs = getSharedPreferences("coolapk_companion", Context.MODE_PRIVATE)
-            prefs.edit().putString("cookie", combined).apply()
+            prefs.edit().putString("cookie", merged).apply()
+            val toastMsg = if (autoDetected) "检测到登录成功，已自动保存！" else "已成功保存登录凭据！"
+            Toast.makeText(this, toastMsg, Toast.LENGTH_SHORT).show()
+            setResult(Activity.RESULT_OK)
+            finish()
             return true
         }
         return false
     }
 
     override fun onDestroy() {
-        webView.destroy()
+        if (::webView.isInitialized) {
+            webView.stopLoading()
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView.removeAllViews()
+            webView.destroy()
+        }
         super.onDestroy()
     }
 }

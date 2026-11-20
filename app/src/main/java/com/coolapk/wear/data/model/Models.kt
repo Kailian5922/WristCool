@@ -1,5 +1,7 @@
 package com.coolapk.wear.data.model
 
+import com.coolapk.wear.data.util.CookieParser
+
 data class AuthCredentials(
     val cookie: String = "",
     val ddid: String = "",
@@ -8,7 +10,7 @@ data class AuthCredentials(
     val avatar: String = ""
 ) {
     val isLoggedIn: Boolean
-        get() = cookie.isNotBlank() && (cookie.contains("uid=") || cookie.contains("token="))
+        get() = CookieParser.hasValidAuth(cookie)
 }
 
 data class FeedItem(
@@ -53,11 +55,6 @@ data class CommentItem(
     val isAuthor: Boolean = false,
     val isTop: Boolean = false,
     val subReplies: List<SubReplyItem> = emptyList()
-)
-
-data class FeedDetail(
-    val feed: FeedItem,
-    val comments: List<CommentItem> = emptyList()
 )
 
 data class UserProfile(
