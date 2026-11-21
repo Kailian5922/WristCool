@@ -1,12 +1,14 @@
 package com.coolapk.wear.presentation.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Image
@@ -22,31 +25,40 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.ThumbUpOffAlt
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.CircularProgressIndicator
-import androidx.wear.compose.material.CompactChip
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.CardDefaults
+import androidx.wear.compose.material3.CompactButton
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.SurfaceTransformation
+import androidx.wear.compose.material3.Text
+import coil.compose.AsyncImage
+import coil.decode.BitmapFactoryDecoder
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.coolapk.wear.data.model.CommentItem
 import com.coolapk.wear.data.model.SubReplyItem
-import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
-import com.coolapk.wear.presentation.theme.WearSurface
-import com.coolapk.wear.presentation.theme.WearSurfaceVariant
+import com.coolapk.wear.data.util.TextSanitizer
+import com.coolapk.wear.presentation.theme.LocalWatchSettings
 
 /**
- * 单条评论的楼中楼展开与分页状态，由 ViewModel 托管，
- * 避免 ScalingLazyColumn 滚出屏幕回收节点后丢失已加载的楼中楼回复。
+ * 单条评论的楼中楼展开与分页状态，由 ViewModel 托管。
  */
 data class SubReplyUiState(
     val isExpanded: Boolean = false,
@@ -57,6 +69,11 @@ data class SubReplyUiState(
     val error: String? = null
 )
 
+/**
+ * Material 3 Expressive 评论卡片。
+ * 借鉴 coolapk-desktop 与 c001apk-Revived，支持评论点赞、回复单条评论/楼中楼、删除自己的评论与全量楼中楼分页展开；
+ * 评论配图默认以轻量小方块预览图呈现，点击后进入全屏加载完整原图/动图；开启「无图省流模式」后仅展示点击查看入口。
+ */
 @Composable
 fun CommentCard(
     comment: CommentItem,
@@ -65,21 +82,29 @@ fun CommentCard(
     onLoadMoreSubReplies: () -> Unit,
     onRetrySubReplies: () -> Unit,
     modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
+    currentUid: String = "",
+    onLikeComment: ((CommentItem) -> Unit)? = null,
+    onReplyComment: ((replyId: String, targetUsername: String) -> Unit)? = null,
+    onDeleteComment: ((CommentItem) -> Unit)? = null,
     onUserClick: ((String) -> Unit)? = null,
     onViewImage: ((String) -> Unit)? = null
 ) {
-    val primaryColor = LocalAppPrimaryColor.current
+    val colorScheme = MaterialTheme.colorScheme
+    val noImageMode = LocalWatchSettings.current.noImageMode
     val loadedSubReplies = subReplyState.replies.ifEmpty { comment.subReplies }
+    val isOwnComment = currentUid.isNotBlank() && comment.uid == currentUid
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(WearSurface)
-            .padding(9.dp)
+    Card(
+        onClick = { onReplyComment?.invoke(comment.id, comment.username) },
+        modifier = modifier.fillMaxWidth(),
+        transformation = transformation,
+        colors = CardDefaults.cardColors(
+            containerColor = colorScheme.surfaceContainer,
+            contentColor = colorScheme.onSurface
+        )
     ) {
-        // 用户头像、昵称（长昵称自动截断不挤掉角标与时间）与时间栏
+        // 作者行
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -97,102 +122,69 @@ fun CommentCard(
                 contentDescription = comment.username,
                 size = 20.dp
             )
-
             Spacer(modifier = Modifier.width(6.dp))
-
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
                     text = comment.username,
-                    color = Color.White,
-                    fontSize = 11.sp,
+                    color = colorScheme.onSurface,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-
                 if (comment.isAuthor) {
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(primaryColor.copy(alpha = 0.2f))
-                            .padding(horizontal = 3.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = "楼主",
-                            color = primaryColor,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    WearPillBadge(
+                        text = "楼主",
+                        containerColor = colorScheme.primaryContainer,
+                        contentColor = colorScheme.onPrimaryContainer
+                    )
                 }
-
                 if (comment.isTop) {
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(Color(0xFFFF5722).copy(alpha = 0.2f))
-                            .padding(horizontal = 3.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = "置顶",
-                            color = Color(0xFFFF5722),
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    WearPillBadge(
+                        text = "置顶",
+                        containerColor = colorScheme.tertiaryContainer,
+                        contentColor = colorScheme.onTertiaryContainer
+                    )
                 }
             }
-
             if (comment.dateString.isNotBlank()) {
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = comment.dateString,
-                    color = Color(0xFFA0A0A5),
-                    fontSize = 9.sp,
+                    color = colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyExtraSmall,
                     maxLines = 1,
                     softWrap = false
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(5.dp))
 
         // 评论正文
         if (comment.message.isNotBlank()) {
             Text(
                 text = comment.message,
-                color = Color(0xFFEEEEEE),
-                fontSize = 12.sp,
-                lineHeight = 16.sp
+                color = colorScheme.onSurface.copy(alpha = 0.94f),
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
-        // 按需加载评论配图/GIF
+        // 评论配图 / GIF：默认加载小方块低分辨率预览图（点开才全量加载），无图模式合并为点击查看按钮
         if (comment.pic.isNotBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            val isGif = comment.pic.contains(".gif", ignoreCase = true)
-            CompactChip(
-                onClick = { onViewImage?.invoke(comment.pic) },
-                label = { Text(if (isGif) "查看动态GIF" else "查看评论配图", fontSize = 10.sp) },
-                icon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Image,
-                        contentDescription = "图片",
-                        tint = primaryColor,
-                        modifier = Modifier.size(13.dp)
-                    )
-                },
-                colors = ChipDefaults.chipColors(backgroundColor = WearSurfaceVariant)
+            Spacer(modifier = Modifier.height(6.dp))
+            CommentImagePreview(
+                imageUrl = comment.pic,
+                previewSize = 56.dp,
+                noImageMode = noImageMode,
+                isSubReply = false,
+                onClick = { onViewImage?.invoke(comment.pic) }
             )
         }
 
@@ -203,9 +195,9 @@ fun CommentCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF222225))
-                    .padding(6.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colorScheme.surfaceContainerHigh)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 val hasMoreThanPreview = replyTotal > 3 || loadedSubReplies.size > 3 || comment.replyNum > loadedSubReplies.size
                 val displayReplies = if (subReplyState.isExpanded || !hasMoreThanPreview) {
@@ -216,24 +208,24 @@ fun CommentCard(
 
                 displayReplies.forEach { sub ->
                     val subText = buildAnnotatedString {
-                        withStyle(SpanStyle(color = primaryColor, fontWeight = FontWeight.Medium)) {
+                        withStyle(SpanStyle(color = colorScheme.primary, fontWeight = FontWeight.SemiBold)) {
                             append(sub.username)
                         }
                         if (sub.isAuthor) {
-                            withStyle(SpanStyle(color = primaryColor, fontSize = 9.sp)) {
+                            withStyle(SpanStyle(color = colorScheme.tertiary, fontWeight = FontWeight.Bold)) {
                                 append(" [楼主]")
                             }
                         }
                         if (sub.replyUsername.isNotBlank()) {
-                            withStyle(SpanStyle(color = Color(0xFFA0A0A5))) {
+                            withStyle(SpanStyle(color = colorScheme.onSurfaceVariant)) {
                                 append(" 回复 ")
                             }
-                            withStyle(SpanStyle(color = primaryColor, fontWeight = FontWeight.Medium)) {
+                            withStyle(SpanStyle(color = colorScheme.primary, fontWeight = FontWeight.SemiBold)) {
                                 append(sub.replyUsername)
                             }
                         }
                         if (sub.message.isNotBlank()) {
-                            withStyle(SpanStyle(color = Color(0xFFCCCCCC))) {
+                            withStyle(SpanStyle(color = colorScheme.onSurface.copy(alpha = 0.9f))) {
                                 append(": ${sub.message}")
                             }
                         }
@@ -241,19 +233,26 @@ fun CommentCard(
 
                     Text(
                         text = subText,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        modifier = Modifier.padding(vertical = 1.dp)
+                        style = MaterialTheme.typography.bodyExtraSmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(enabled = onReplyComment != null && sub.id.isNotBlank()) {
+                                onReplyComment?.invoke(sub.id, sub.username)
+                            }
+                            .padding(vertical = 2.dp)
                     )
 
                     if (sub.pic.isNotBlank()) {
-                        val isSubGif = sub.pic.contains(".gif", ignoreCase = true)
-                        CompactChip(
-                            onClick = { onViewImage?.invoke(sub.pic) },
-                            label = { Text(if (isSubGif) "查看GIF" else "查看图片", fontSize = 9.sp) },
-                            colors = ChipDefaults.chipColors(backgroundColor = WearSurfaceVariant),
-                            modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
+                        Spacer(modifier = Modifier.height(3.dp))
+                        CommentImagePreview(
+                            imageUrl = sub.pic,
+                            previewSize = 44.dp,
+                            noImageMode = noImageMode,
+                            isSubReply = true,
+                            onClick = { onViewImage?.invoke(sub.pic) }
                         )
+                        Spacer(modifier = Modifier.height(3.dp))
                     }
                 }
 
@@ -262,15 +261,12 @@ fun CommentCard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(vertical = 4.dp)
                     ) {
-                        CircularProgressIndicator(
-                            indicatorColor = primaryColor,
-                            modifier = Modifier.size(12.dp)
-                        )
+                        ExpressiveLoadingIndicator(size = 15.dp, contained = false)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "正在加载楼中楼回复...",
-                            color = primaryColor,
-                            fontSize = 10.sp
+                            text = "正在加载楼中楼…",
+                            color = colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
@@ -280,21 +276,21 @@ fun CommentCard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(6.dp))
                             .clickable { onRetrySubReplies() }
-                            .padding(vertical = 4.dp, horizontal = 2.dp)
+                            .padding(vertical = 4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Refresh,
                             contentDescription = "重试",
-                            tint = Color(0xFFFF8A65),
+                            tint = colorScheme.error,
                             modifier = Modifier.size(12.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = "加载失败，点击重试",
-                            color = Color(0xFFFF8A65),
-                            fontSize = 10.sp
+                            color = colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
@@ -304,22 +300,22 @@ fun CommentCard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(6.dp))
                             .clickable { onToggleExpand() }
-                            .padding(vertical = 4.dp, horizontal = 2.dp)
+                            .padding(vertical = 4.dp)
                     ) {
                         Text(
-                            text = "共 $replyTotal 条回复 · 点击展开全部",
-                            color = primaryColor,
-                            fontSize = 10.sp,
+                            text = "展开全部 $replyTotal 条回复",
+                            color = colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.width(3.dp))
                         Icon(
                             imageVector = Icons.Rounded.ExpandMore,
                             contentDescription = "展开",
-                            tint = primaryColor,
-                            modifier = Modifier.size(13.dp)
+                            tint = colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 } else if (subReplyState.isExpanded) {
@@ -334,29 +330,27 @@ fun CommentCard(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
+                                    .clip(RoundedCornerShape(6.dp))
                                     .clickable { onLoadMoreSubReplies() }
-                                    .padding(vertical = 3.dp, horizontal = 2.dp)
+                                    .padding(vertical = 3.dp)
                             ) {
                                 Text(
-                                    text = "加载更多 (${loadedSubReplies.size}/$replyTotal)",
-                                    color = primaryColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
+                                    text = "更多 (${loadedSubReplies.size}/$replyTotal)",
+                                    color = colorScheme.primary,
+                                    style = MaterialTheme.typography.labelSmall
                                 )
-                                Spacer(modifier = Modifier.width(2.dp))
                                 Icon(
                                     imageVector = Icons.Rounded.ExpandMore,
                                     contentDescription = "加载更多",
-                                    tint = primaryColor,
+                                    tint = colorScheme.primary,
                                     modifier = Modifier.size(13.dp)
                                 )
                             }
                         } else if (!subReplyState.isLoading) {
                             Text(
-                                text = "已展示全部 ${loadedSubReplies.size} 条回复",
-                                color = Color(0xFFA0A0A5),
-                                fontSize = 9.sp
+                                text = "已全部展开 (${loadedSubReplies.size})",
+                                color = colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall
                             )
                         } else {
                             Spacer(modifier = Modifier.width(1.dp))
@@ -365,21 +359,19 @@ fun CommentCard(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .clickable { onToggleExpand() }
-                                .padding(vertical = 3.dp, horizontal = 2.dp)
+                                .padding(vertical = 3.dp)
                         ) {
                             Text(
                                 text = "收起",
-                                color = primaryColor,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Medium
+                                color = colorScheme.primary,
+                                style = MaterialTheme.typography.labelSmall
                             )
-                            Spacer(modifier = Modifier.width(2.dp))
                             Icon(
                                 imageVector = Icons.Rounded.ExpandLess,
                                 contentDescription = "收起",
-                                tint = primaryColor,
+                                tint = colorScheme.primary,
                                 modifier = Modifier.size(13.dp)
                             )
                         }
@@ -388,46 +380,165 @@ fun CommentCard(
             }
         }
 
-        if (comment.likeNum > 0 || comment.replyNum > 0) {
-            Spacer(modifier = Modifier.height(4.dp))
+        // 评论互动操作条（点赞 / 回复 / 删除自己评论）
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isOwnComment && onDeleteComment != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onDeleteComment(comment) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteOutline,
+                        contentDescription = "删除评论",
+                        tint = colorScheme.error,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = "删除",
+                        color = colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.width(1.dp))
+            }
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (comment.likeNum > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = onLikeComment != null) { onLikeComment?.invoke(comment) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
                     Icon(
                         imageVector = if (comment.isLiked) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt,
-                        contentDescription = "赞",
-                        tint = if (comment.isLiked) primaryColor else Color(0xFFA0A0A5),
-                        modifier = Modifier.size(12.dp)
+                        contentDescription = "点赞评论",
+                        tint = if (comment.isLiked) colorScheme.primary else colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = "${comment.likeNum}",
-                        color = Color(0xFFA0A0A5),
-                        fontSize = 10.sp
+                        text = if (comment.likeNum > 0) "${comment.likeNum}" else "赞",
+                        color = if (comment.isLiked) colorScheme.primary else colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall
                     )
-                    if (comment.replyNum > 0) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                    }
                 }
 
-                if (comment.replyNum > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = onReplyComment != null) {
+                            onReplyComment?.invoke(comment.id, comment.username)
+                        }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
                     Icon(
                         imageVector = Icons.Rounded.ChatBubbleOutline,
-                        contentDescription = "回复数",
-                        tint = Color(0xFFA0A0A5),
-                        modifier = Modifier.size(12.dp)
+                        contentDescription = "回复评论",
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = "${comment.replyNum}",
-                        color = Color(0xFFA0A0A5),
-                        fontSize = 10.sp
+                        text = if (comment.replyNum > 0) "${comment.replyNum}" else "回复",
+                        color = colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
         }
+    }
+}
+
+/**
+ * 评论区 / 楼中楼配图预览组件：
+ * - 动图 GIF 与无图省流模式：不预载原动图，统一渲染轻量点击查看按钮，避免进入评论区时并发下载大体积动图；
+ * - 静态配图：优先拉取酷安官方 `.s.jpg` 真缩略图并限制解码尺寸，点击后进入全屏查看完整原图。
+ */
+@Composable
+private fun CommentImagePreview(
+    imageUrl: String,
+    previewSize: Dp,
+    noImageMode: Boolean,
+    isSubReply: Boolean,
+    onClick: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val isGif = remember(imageUrl) { TextSanitizer.isGifImageUrl(imageUrl) }
+
+    if (noImageMode || isGif) {
+        CompactButton(
+            onClick = onClick,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Image,
+                    contentDescription = if (isGif) "动图" else "图片",
+                    modifier = Modifier.size(13.dp)
+                )
+            },
+            label = {
+                Text(
+                    text = when {
+                        isGif && isSubReply -> "查看GIF"
+                        isGif -> "查看动图 GIF"
+                        isSubReply -> "查看图片"
+                        else -> "查看评论配图"
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        )
+        return
+    }
+
+    val context = LocalContext.current
+    val thumbUrl = remember(imageUrl) { TextSanitizer.toCoolapkThumbnailUrl(imageUrl) }
+    var useOriginalFallback by remember(imageUrl) { mutableStateOf(false) }
+    val activeUrl = if (useOriginalFallback) imageUrl else thumbUrl
+    val thumbRequest = remember(activeUrl, context) {
+        ImageRequest.Builder(context)
+            .data(activeUrl)
+            .size(160, 160)
+            .precision(Precision.INEXACT)
+            .decoderFactory(BitmapFactoryDecoder.Factory())
+            .crossfade(true)
+            .build()
+    }
+
+    val shape = RoundedCornerShape(if (isSubReply) 8.dp else 10.dp)
+    Box(
+        modifier = Modifier
+            .size(previewSize)
+            .clip(shape)
+            .background(colorScheme.surfaceContainerHigh)
+            .border(width = 0.75.dp, color = colorScheme.outlineVariant, shape = shape)
+            .clickable(onClick = onClick)
+    ) {
+        AsyncImage(
+            model = thumbRequest,
+            contentDescription = "评论配图预览，点击查看原图",
+            contentScale = ContentScale.Crop,
+            onError = {
+                if (!useOriginalFallback && thumbUrl != imageUrl) {
+                    useOriginalFallback = true
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }

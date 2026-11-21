@@ -115,11 +115,12 @@ class MeViewModel(
         viewModelScope.launch {
             val result = authRepository.importCompanionPayload(trimmed)
             result.onSuccess { creds ->
+                val hasDeviceId = creds.deviceId.isNotBlank()
                 _uiState.update {
                     it.copy(
                         credentials = creds,
                         isImporting = false,
-                        message = "凭据导入成功，正在校验账号…",
+                        message = if (hasDeviceId) "凭据与数盟设备 ID 导入成功，正在校验…" else "凭据导入成功，正在校验账号…",
                         isError = false
                     )
                 }
@@ -130,7 +131,7 @@ class MeViewModel(
                     }
                     _uiState.update {
                         it.copy(
-                            message = "已成功登录：${info.username}",
+                            message = if (hasDeviceId) "已登录：${info.username}（含数盟设备 ID）" else "已成功登录：${info.username}",
                             isError = false
                         )
                     }
@@ -143,12 +144,25 @@ class MeViewModel(
                     }
                 }
             }.onFailure { err ->
-                _uiState.update {
-                    it.copy(
-                        isImporting = false,
-                        message = err.message ?: "凭据格式无效，请从伴侣端重新复制",
-                        isError = true
-                    )
+                // 若剪贴板里是纯官方数盟设备日志或 DU... ID，直接更新设备 ID 而不影响已有登录态
+                val deviceResult = authRepository.importDeviceIdOnly(trimmed)
+                deviceResult.onSuccess { savedId ->
+                    val shortId = if (savedId.length > 10) "${savedId.take(6)}…${savedId.takeLast(4)}" else savedId
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            message = "数盟设备 ID 已生效：$shortId",
+                            isError = false
+                        )
+                    }
+                }.onFailure {
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            message = err.message ?: "凭据格式无效，请从伴侣端重新复制",
+                            isError = true
+                        )
+                    }
                 }
             }
         }

@@ -37,6 +37,10 @@ object TextSanitizer {
     private val SAME_YEAR_FORMATTER = DateTimeFormatter.ofPattern("MM-dd")
     private val OTHER_YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
+    private val COOLAPK_THUMBNAIL_HOSTS = setOf("image.coolapk.com", "pic.coolapk.com")
+    private val STATIC_IMAGE_EXTENSIONS = listOf(".jpg", ".jpeg", ".png", ".webp")
+    private val EXISTING_THUMB_SUFFIXES = listOf(".s.jpg", ".xs.jpg", ".m.jpg", ".t.jpg")
+
     fun normalizeImageUrl(url: String): String {
         var normalized = url.trim()
         if (normalized.isEmpty()) return ""
@@ -50,6 +54,35 @@ object TextSanitizer {
             else -> normalized
         }
         return if (normalized.startsWith("https://", ignoreCase = true)) normalized else ""
+    }
+
+    /**
+     * 判断图片 URL 是否为动图 GIF（忽略查询参数与锚点）。
+     */
+    fun isGifImageUrl(url: String): Boolean {
+        val cleanPath = url.trim().substringBefore('?').substringBefore('#').lowercase()
+        return cleanPath.endsWith(".gif")
+    }
+
+    /**
+     * 将酷安静态图床原图 URL 转为官方轻量 `.s.jpg` 服务端缩略图（参考 c001apk-Revived）。
+     * - 动图 GIF、已带缩略图后缀、带签名查询参数、头像域或非酷安图床地址保持原样返回。
+     */
+    fun toCoolapkThumbnailUrl(url: String): String {
+        val normalized = normalizeImageUrl(url)
+        if (normalized.isEmpty()) return ""
+        if (isGifImageUrl(normalized)) return normalized
+        if (normalized.contains('?') || normalized.contains('#')) return normalized
+
+        val withoutScheme = normalized.substringAfter("://", "")
+        val host = withoutScheme.substringBefore('/').substringBefore(':').lowercase()
+        if (host !in COOLAPK_THUMBNAIL_HOSTS) return normalized
+
+        val lower = normalized.lowercase()
+        if (EXISTING_THUMB_SUFFIXES.any { lower.endsWith(it) }) return normalized
+        if (STATIC_IMAGE_EXTENSIONS.none { lower.endsWith(it) }) return normalized
+
+        return "$normalized.s.jpg"
     }
 
     fun cleanHtmlTags(html: String): String {
