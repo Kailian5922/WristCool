@@ -88,6 +88,7 @@ import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
+import com.coolapk.wear.presentation.components.guardHeaderButtonsAgainstSwipeMisclick
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import com.coolapk.wear.presentation.detail.ComposerMode
 import com.coolapk.wear.presentation.detail.ReplyOverlay
@@ -317,7 +318,11 @@ fun FeedsScreen(
                         val meInteraction = remember { MutableInteractionSource() }
 
                         ButtonGroup(
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .guardHeaderButtonsAgainstSwipeMisclick(
+                                    onShortSwipeLeftToNextPage = onInboxClick
+                                )
                         ) {
                             FilledTonalIconButton(
                                 onClick = onSearchClick,
@@ -488,6 +493,9 @@ fun FeedsScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             FilledTonalButton(
                                 onClick = onMeClick,
+                                modifier = Modifier.guardHeaderButtonsAgainstSwipeMisclick(
+                                    onShortSwipeLeftToNextPage = onInboxClick
+                                ),
                                 label = { Text("去导入登录") }
                             )
                         }

@@ -2,6 +2,7 @@ package com.coolapk.wear
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
@@ -28,6 +29,9 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.coolapk.wear.data.model.FeedMemoryCache
 import com.coolapk.wear.di.AppContainer
 import com.coolapk.wear.presentation.components.RotaryDispatcher
+import com.coolapk.wear.presentation.components.rememberSingleStepPagerController
+import com.coolapk.wear.presentation.components.rememberSingleStepTargetedFlingBehavior
+import com.coolapk.wear.presentation.components.singleStepPagerTouchTracker
 import com.coolapk.wear.presentation.detail.FeedDetailScreen
 import com.coolapk.wear.presentation.detail.FeedDetailViewModel
 import com.coolapk.wear.presentation.feeds.FeedsScreen
@@ -192,9 +196,25 @@ fun CoolapkWearApp(container: AppContainer) {
             // 根级 3 页 Horologist / M3 Expressive HorizontalPagerScaffold：动态 | 消息 | 我的
             composable("home") {
                 val pagerState = rememberPagerState(initialPage = 0) { 3 }
+                val singleStepController = rememberSingleStepPagerController(pagerState)
+                val baseSnapFlingBehavior = PagerDefaults.snapFlingBehavior(
+                    state = pagerState,
+                    maxFlingPages = 0,
+                    snapAnimationSpec = PagerDefaults.SnapAnimationSpec,
+                    snapPositionalThreshold = 0.5f
+                )
+                val singleStepFlingBehavior = rememberSingleStepTargetedFlingBehavior(
+                    pagerState = pagerState,
+                    controller = singleStepController,
+                    delegate = baseSnapFlingBehavior
+                )
                 val scope = rememberCoroutineScope()
 
                 fun jumpToPage(target: Int) {
+                    singleStepController.onProgrammaticJump(
+                        targetPage = target,
+                        nowMs = SystemClock.uptimeMillis()
+                    )
                     scope.launch {
                         try {
                             pagerState.animateScrollToPage(target)
@@ -213,14 +233,13 @@ fun CoolapkWearApp(container: AppContainer) {
                 HorizontalPagerScaffold(pagerState = pagerState) {
                     HorizontalPager(
                         state = pagerState,
+                        modifier = Modifier.singleStepPagerTouchTracker(
+                            pagerState = pagerState,
+                            controller = singleStepController
+                        ),
                         beyondViewportPageCount = 1,
                         rotaryScrollableBehavior = null,
-                        flingBehavior = PagerDefaults.snapFlingBehavior(
-                            state = pagerState,
-                            maxFlingPages = 0,
-                            snapAnimationSpec = PagerDefaults.SnapAnimationSpec,
-                            snapPositionalThreshold = 0.5f
-                        ),
+                        flingBehavior = singleStepFlingBehavior,
                         key = { it }
                     ) { page ->
                         AnimatedPage(pageIndex = page, pagerState = pagerState) {
