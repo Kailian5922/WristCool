@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -54,9 +55,6 @@ import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
-import androidx.wear.compose.material3.placeholder
-import androidx.wear.compose.material3.placeholderShimmer
-import androidx.wear.compose.material3.rememberPlaceholderState
 import coil.compose.AsyncImage
 import com.coolapk.wear.data.model.UserCardItem
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -176,63 +174,46 @@ fun TransformingLazyColumnItemScope.WearSectionSubHeader(
 }
 
 /**
- * Material 3 Expressive 形态变换加载占位。
- * 结合标志性 Expressive 多边形变形动画与可选柔和骨架卡片。
+ * Material 3 Expressive 纯形态变换旋转加载指示器（内联列表区使用，无底框与矩形骨架）。
  */
 @Composable
 fun WearLoadingPlaceholder(
-    height: Dp = 96.dp,
+    height: Dp = 72.dp,
     indicatorSize: Dp = 36.dp,
-    useSkeleton: Boolean = true,
-    label: String? = "加载中…"
+    @Suppress("UNUSED_PARAMETER") useSkeleton: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") label: String? = null
 ) {
-    if (useSkeleton) {
-        val placeholderState = rememberPlaceholderState(isVisible = true)
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            ExpressiveLoadingIndicator(
-                size = indicatorSize.coerceAtLeast(36.dp),
-                contained = true
-            )
-            if (!label.isNullOrBlank()) {
-                Text(
-                    text = label,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-            Column(
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .placeholderShimmer(placeholderState)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
-                        .clip(MaterialTheme.shapes.large)
-                        .placeholder(placeholderState)
-                )
-            }
-        }
-    } else {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height),
-            contentAlignment = Alignment.Center
-        ) {
-            ExpressiveLoadingIndicator(
-                size = indicatorSize.coerceAtLeast(24.dp),
-                contained = indicatorSize >= 28.dp
-            )
-        }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(height),
+        contentAlignment = Alignment.Center
+    ) {
+        ExpressiveLoadingIndicator(
+            size = indicatorSize.coerceAtLeast(22.dp),
+            contained = false
+        )
+    }
+}
+
+/**
+ * 居中屏幕显示纯旋转 Material 3 Expressive 加载图标（无矩形骨架与多余文案）。
+ */
+@Composable
+fun WearCenteredLoadingOverlay(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    indicatorSize: Dp = 40.dp
+) {
+    if (!visible) return
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        ExpressiveLoadingIndicator(
+            size = indicatorSize,
+            contained = false
+        )
     }
 }
 

@@ -507,4 +507,182 @@ class CoolapkJsonParserTest {
         assertEquals("原作者", myReplies[0].targetUsername)
         assertEquals(8, myReplies[0].likeNum)
     }
+
+    @Test
+    fun `parseCloudHistoryList parses flat history entries filters placeholders and skips non-feed urls`() {
+        val body = """
+            {
+              "data": [
+                {
+                  "entityType": "history",
+                  "id": "h_row_1",
+                  "title": "极客小王的动态",
+                  "description": "feedCover",
+                  "url": "/feed/78901234",
+                  "logo": "avatar/u1.jpg",
+                  "pic": "feed/p1.jpg",
+                  "dateline": 1700000100
+                },
+                {
+                  "entityType": "history",
+                  "id": "h_row_2",
+                  "title": "评测文章标题",
+                  "description": "这是真实摘要内容",
+                  "url": "/feed/78901235",
+                  "target_id": "78901235",
+                  "dateline": 1700000200
+                },
+                {
+                  "entityType": "history",
+                  "id": "h_row_user",
+                  "title": "某个用户主页",
+                  "url": "/u/10086"
+                },
+                {
+                  "entityType": "history",
+                  "id": "h_row_prod",
+                  "title": "某款手机",
+                  "url": "/product/555"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val list = CoolapkJsonParser.parseCloudHistoryList(body)
+        assertEquals(2, list.size)
+        assertEquals("78901234", list[0].id)
+        assertEquals("极客小王", list[0].username)
+        assertEquals("查看历史动态 #78901234", list[0].message)
+        assertEquals("https://image.coolapk.com/avatar/u1.jpg", list[0].userAvatar)
+        assertEquals(listOf("https://image.coolapk.com/feed/p1.jpg"), list[0].picArr)
+
+        assertEquals("78901235", list[1].id)
+        assertEquals("评测文章标题", list[1].title)
+        assertEquals("这是真实摘要内容", list[1].message)
+    }
+
+    @Test
+    fun `parseFeedList parses ershou channel items inside dataRows with price and object picArr`() {
+        val body = """
+            {
+              "data": [
+                {
+                  "entityType": "card",
+                  "dataRows": [
+                    {
+                      "entityType": "feed",
+                      "feedType": "ershou",
+                      "id": "66001",
+                      "username": "闲置卖家",
+                      "uid": "77",
+                      "message": "",
+                      "ershou_info": {
+                        "product_title": "Pixel Watch 3 45mm",
+                        "price": "1599"
+                      },
+                      "picArr": [
+                        {"url": "http://image.coolapk.com/watch.jpg"}
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val feeds = CoolapkJsonParser.parseFeedList(body)
+        assertEquals(1, feeds.size)
+        assertEquals("66001", feeds[0].id)
+        assertTrue(feeds[0].title.contains("Pixel Watch 3 45mm"))
+        assertTrue(feeds[0].title.contains("¥1599"))
+        assertEquals(listOf("https://image.coolapk.com/watch.jpg"), feeds[0].picArr)
+    }
+
+    @Test
+    fun `parseNotificationList accurately resolves feedId for atMe and feedLike and leaves reply-only notifications with replyId`() {
+        val body = """
+            {
+              "data": [
+                {
+                  "entityType": "feed",
+                  "id": "900001",
+                  "uid": "123",
+                  "username": "AtSender",
+                  "message": "@我 看看这款手表"
+                },
+                {
+                  "entityType": "feed",
+                  "id": "900002",
+                  "likeUserInfo": {
+                    "uid": "456",
+                    "username": "Liker"
+                  },
+                  "message": "我发的原始动态"
+                },
+                {
+                  "entityType": "notification",
+                  "id": "notif_999",
+                  "source_id": "777888",
+                  "target_type": "feed_reply",
+                  "target_id": "777888",
+                  "fromuid": "789",
+                  "fromusername": "CommentAter",
+                  "note": "在评论中提到了你"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val items = CoolapkJsonParser.parseNotificationList(body)
+        assertEquals(3, items.size)
+
+        // @我动态（直接返回 feed 实体）
+        assertEquals("900001", items[0].feedId)
+        assertEquals("AtSender", items[0].fromUsername)
+
+        // 收到的赞（feedLikeList 返回被赞动态 + likeUserInfo）
+        assertEquals("900002", items[1].feedId)
+        assertEquals("Liker", items[1].fromUsername)
+        assertEquals("赞了你的动态", items[1].note)
+
+        // 评论@我（仅含评论 ID，不误把 source_id/notif_id 当作 feedId，保留 replyId 供反查）
+        assertEquals("", items[2].feedId)
+        assertEquals("777888", items[2].replyId)
+    }
+
+    @Test
+    fun `parseCollectionList detects default collection flag and fallback default title`() {
+        val body = """
+            {
+              "data": [
+                {
+                  "entityType": "collection",
+                  "id": "1001",
+                  "uid": "42",
+                  "title": "",
+                  "defaultCollected": 1,
+                  "item_num": 28,
+                  "is_open": 0
+                },
+                {
+                  "entityType": "collection",
+                  "id": "2002",
+                  "uid": "42",
+                  "title": "玩机技巧",
+                  "itemNum": 5,
+                  "isOpen": 1
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val cols = CoolapkJsonParser.parseCollectionList(body)
+        assertEquals(2, cols.size)
+        assertTrue(cols[0].isDefault)
+        assertEquals("默认收藏夹", cols[0].title)
+        assertEquals(28, cols[0].itemNum)
+        assertFalse(cols[0].isOpen)
+        assertFalse(cols[1].isDefault)
+        assertEquals("玩机技巧", cols[1].title)
+    }
 }

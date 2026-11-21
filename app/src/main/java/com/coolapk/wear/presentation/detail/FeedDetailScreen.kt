@@ -85,6 +85,7 @@ import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.SubReplyUiState
 import com.coolapk.wear.presentation.components.UserAvatar
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearConfirmDialog
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
@@ -193,10 +194,6 @@ fun FeedDetailScreen(
                     .fillMaxSize()
                     .rotaryEventHandler(listState, enabled = !hasAnyOverlay)
             ) {
-                if (uiState.isLoading) {
-                    item(key = "detail_loading") { WearLoadingPlaceholder() }
-                }
-
                 if (uiState.error != null) {
                     item(key = "detail_error") {
                         WearErrorRetry(
@@ -796,6 +793,8 @@ fun FeedDetailScreen(
                 }
             }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && uiState.feed == null)
 
         // 全屏多图画廊浮层
         galleryState?.let { gallery ->

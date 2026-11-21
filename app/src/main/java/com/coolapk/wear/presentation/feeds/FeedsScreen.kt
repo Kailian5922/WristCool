@@ -83,11 +83,11 @@ import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import com.coolapk.wear.presentation.detail.ComposerMode
 import com.coolapk.wear.presentation.detail.ReplyOverlay
@@ -130,11 +130,11 @@ fun FeedsScreen(
         )
     }
 
-    // 物理阻尼下拉刷新
+    // 物理阻尼下拉刷新（显式关闭 TransformingLazyColumn 默认 overscroll，结合 !canScrollBackward 精准触发）
     val pullOffsetAnimatable = remember { Animatable(0f) }
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
-    val refreshTriggerPx = with(density) { 48.dp.toPx() }
-    val maxPullPx = with(density) { 82.dp.toPx() }
+    val refreshTriggerPx = with(density) { 42.dp.toPx() }
+    val maxPullPx = with(density) { 78.dp.toPx() }
     val vibrator = remember(context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java)?.defaultVibrator
@@ -145,14 +145,52 @@ fun FeedsScreen(
     }
     var hasVibratedOnThreshold by remember { mutableStateOf(false) }
 
+    fun consumePullDown(deltaY: Float): Offset {
+        val newOffset = (dragOffsetPx + deltaY * 0.55f).coerceAtMost(maxPullPx)
+        dragOffsetPx = newOffset
+        if (newOffset >= refreshTriggerPx && !hasVibratedOnThreshold) {
+            hasVibratedOnThreshold = true
+            if (settings.hapticEnabled) {
+                runCatching {
+                    vibrator?.vibrate(
+                        VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE)
+                    )
+                }
+            }
+        }
+        coroutineScope.launch { pullOffsetAnimatable.snapTo(newOffset) }
+        return Offset(0f, deltaY)
+    }
+
+    suspend fun releasePull() {
+        val currentValue = dragOffsetPx
+        if (currentValue <= 0f) return
+        dragOffsetPx = 0f
+        hasVibratedOnThreshold = false
+        if (currentValue >= refreshTriggerPx) {
+            viewModel.refresh()
+        }
+        pullOffsetAnimatable.animateTo(
+            targetValue = 0f,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+        )
+    }
+
     val nestedScrollConnection = remember(listState, refreshTriggerPx, maxPullPx, settings.hapticEnabled) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.UserInput && available.y < 0f && dragOffsetPx > 0f) {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                if (available.y < 0f && dragOffsetPx > 0f) {
                     val toConsume = available.y.coerceAtLeast(-dragOffsetPx)
                     dragOffsetPx = (dragOffsetPx + toConsume).coerceAtLeast(0f)
+                    if (dragOffsetPx < refreshTriggerPx) {
+                        hasVibratedOnThreshold = false
+                    }
                     coroutineScope.launch { pullOffsetAnimatable.snapTo(dragOffsetPx) }
                     return Offset(0f, toConsume)
+                }
+                if (available.y > 0f && !listState.canScrollBackward) {
+                    return consumePullDown(available.y)
                 }
                 return Offset.Zero
             }
@@ -162,40 +200,26 @@ fun FeedsScreen(
                 available: Offset,
                 source: NestedScrollSource
             ): Offset {
-                val firstVisibleIndex = listState.layoutInfo.visibleItems.firstOrNull()?.index ?: 0
-                val isAtTop = listState.anchorItemIndex <= 1 && firstVisibleIndex == 0
-                if (source == NestedScrollSource.UserInput && available.y > 0f && isAtTop) {
-                    val newOffset = (dragOffsetPx + available.y * 0.45f).coerceAtMost(maxPullPx)
-                    dragOffsetPx = newOffset
-                    if (newOffset >= refreshTriggerPx && !hasVibratedOnThreshold) {
-                        hasVibratedOnThreshold = true
-                        if (settings.hapticEnabled) {
-                            runCatching {
-                                vibrator?.vibrate(
-                                    VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE)
-                                )
-                            }
-                        }
-                    }
-                    coroutineScope.launch { pullOffsetAnimatable.snapTo(newOffset) }
-                    return Offset(0f, available.y)
+                if (source == NestedScrollSource.UserInput &&
+                    available.y > 0f &&
+                    !listState.canScrollBackward
+                ) {
+                    return consumePullDown(available.y)
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                val currentValue = dragOffsetPx
-                if (currentValue <= 0f) return Velocity.Zero
-                dragOffsetPx = 0f
-                hasVibratedOnThreshold = false
-                if (currentValue >= refreshTriggerPx) {
-                    viewModel.refresh()
+                if (dragOffsetPx <= 0f) return Velocity.Zero
+                releasePull()
+                return Velocity(0f, available.y)
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (dragOffsetPx > 0f) {
+                    releasePull()
                 }
-                pullOffsetAnimatable.animateTo(
-                    targetValue = 0f,
-                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
-                )
-                return available
+                return Velocity.Zero
             }
         }
     }
@@ -222,6 +246,9 @@ fun FeedsScreen(
         isLoading = uiState.isLoading || uiState.isLoadingMore,
         onLoadMore = { viewModel.loadMore() }
     )
+
+    val needsTimelineLogin = uiState.currentTab == FeedTab.TIMELINE && !uiState.isLoggedIn
+    val isInitialEmptyLoading = uiState.isLoading && uiState.items.isEmpty() && !needsTimelineLogin
 
     HorologistScaffold(
         scrollState = listState,
@@ -260,10 +287,12 @@ fun FeedsScreen(
             TransformingLazyColumn(
                 state = listState,
                 contentPadding = contentPadding,
+                overscrollEffect = null,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        translationY = pullOffsetAnimatable.value * 0.45f
+                        translationY = pullOffsetAnimatable.value * 0.48f
+                        alpha = if (isInitialEmptyLoading) 0.22f else 1f
                     }
                     .rotaryEventHandler(listState, enabled = isActivePage && !showComposeOverlay)
             ) {
@@ -427,7 +456,6 @@ fun FeedsScreen(
                 }
 
                 // 关注流未登录引导卡片
-                val needsTimelineLogin = uiState.currentTab == FeedTab.TIMELINE && !uiState.isLoggedIn
                 if (needsTimelineLogin) {
                     item(key = "timeline_login") {
                         Column(
@@ -463,12 +491,6 @@ fun FeedsScreen(
                                 label = { Text("去导入登录") }
                             )
                         }
-                    }
-                }
-
-                if (uiState.isLoading && uiState.items.isEmpty()) {
-                    item(key = "loading_skeleton") {
-                        WearLoadingPlaceholder(label = "正在加载${uiState.currentTab.title}…")
                     }
                 }
 
@@ -519,49 +541,31 @@ fun FeedsScreen(
                 }
             }
 
-            // Material 3 Expressive 浮动下拉刷新形态变换指示胶囊
+            // 居中屏幕显示纯旋转 Material 3 Expressive 加载符号（无底框）
+            WearCenteredLoadingOverlay(
+                visible = isInitialEmptyLoading,
+                indicatorSize = 42.dp
+            )
+
+            // Material 3 Expressive 顶部下拉刷新纯形态变换指示器
             AnimatedVisibility(
-                visible = pullOffsetAnimatable.value > 12f || (uiState.isLoading && uiState.items.isNotEmpty()),
+                visible = pullOffsetAnimatable.value > 10f || (uiState.isLoading && uiState.items.isNotEmpty()),
                 enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
                 exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 20.dp)
+                    .padding(top = 22.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(colorScheme.surfaceContainerHigh.copy(alpha = 0.96f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (uiState.isLoading) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            ExpressiveLoadingIndicator(size = 18.dp, contained = false)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "正在刷新…",
-                                color = colorScheme.primary,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    } else {
-                        val progress = (pullOffsetAnimatable.value / refreshTriggerPx).coerceIn(0f, 1f)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            ExpressiveLoadingIndicator(
-                                size = 18.dp,
-                                contained = false,
-                                progress = progress,
-                                indicatorColor = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (progress >= 1f) "松开刷新" else "下拉刷新",
-                                color = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
+                if (uiState.isLoading) {
+                    ExpressiveLoadingIndicator(size = 28.dp, contained = false)
+                } else {
+                    val progress = (pullOffsetAnimatable.value / refreshTriggerPx).coerceIn(0f, 1f)
+                    ExpressiveLoadingIndicator(
+                        size = 28.dp,
+                        contained = false,
+                        progress = progress,
+                        indicatorColor = if (progress >= 1f) colorScheme.primary else colorScheme.onSurfaceVariant
+                    )
                 }
             }
 

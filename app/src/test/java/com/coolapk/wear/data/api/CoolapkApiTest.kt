@@ -43,21 +43,49 @@ class CoolapkApiTest {
     }
 
     @Test
-    fun `toggleLike calls like and unlike endpoints respectively`() = runTest {
+    fun `toggleLike calls like and unlike endpoints with query params and attaches real ddid only on like`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"count":10}}"""))
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"count":9}}"""))
 
         val likeResult = api.toggleLike("1001", like = true)
         assertTrue(likeResult.isSuccess)
         val req1 = server.takeRequest()
-        assertEquals("/v6/feed/like", req1.path)
+        assertEquals("POST", req1.method)
+        assertEquals("/v6/feed/like?id=1001&detail=0", req1.path)
+        assertEquals("trace=", req1.body.readUtf8())
         assertTrue(req1.getHeader("X-App-Token").orEmpty().startsWith("v3"))
         assertTrue(req1.getHeader("Cookie").orEmpty().contains("ddid=ddid-999"))
 
         val unlikeResult = api.toggleLike("1001", like = false)
         assertTrue(unlikeResult.isSuccess)
         val req2 = server.takeRequest()
-        assertEquals("/v6/feed/unlike", req2.path)
+        assertEquals("POST", req2.method)
+        assertEquals("/v6/feed/unlike?id=1001&detail=0", req2.path)
+        assertTrue(!req2.getHeader("Cookie").orEmpty().contains("ddid="))
+    }
+
+    @Test
+    fun `toggleLike strips fake companion UUID ddid from Cookie to prevent risk-control error`() = runTest {
+        val fakeUuidApi = CoolapkApi(
+            deviceCodeProvider = { "test-device-code" },
+            userAgent = "TestUA/1.0",
+            credentialsProvider = {
+                AuthCredentials(
+                    cookie = "uid=42; token=abc123; ddid=550e8400-e29b-41d4-a716-446655440000",
+                    ddid = "550e8400-e29b-41d4-a716-446655440000",
+                    uid = "42"
+                )
+            },
+            baseUrl = server.url("/").toString()
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"count":10}}"""))
+
+        assertTrue(fakeUuidApi.toggleLike("1001", like = true).isSuccess)
+        val req = server.takeRequest()
+        val cookie = req.getHeader("Cookie").orEmpty()
+        assertTrue(cookie.contains("uid=42"))
+        assertTrue(cookie.contains("token=abc123"))
+        assertTrue(!cookie.contains("ddid="))
     }
 
     @Test
@@ -74,14 +102,18 @@ class CoolapkApiTest {
     }
 
     @Test
-    fun `unFavoriteFeed falls back from unFavorite to lowercase unfavorite`() = runTest {
+    fun `unFavoriteFeed falls back from GET unFavorite to GET lowercase unfavorite`() = runTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("Not Found"))
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":1}"""))
 
         val result = api.unFavoriteFeed("9001")
         assertTrue(result.isSuccess)
-        assertEquals("/v6/feed/unFavorite", server.takeRequest().path)
-        assertEquals("/v6/feed/unfavorite", server.takeRequest().path)
+        val req1 = server.takeRequest()
+        assertEquals("GET", req1.method)
+        assertEquals("/v6/feed/unFavorite?id=9001", req1.path)
+        val req2 = server.takeRequest()
+        assertEquals("GET", req2.method)
+        assertEquals("/v6/feed/unfavorite?id=9001", req2.path)
     }
 
     @Test
@@ -222,5 +254,70 @@ class CoolapkApiTest {
         assertTrue(searchRes.isSuccess)
         assertEquals(1, searchRes.getOrThrow().size)
         assertEquals("/v6/search?type=product&searchValue=Watch&page=1", server.takeRequest().path)
+    }
+
+    @Test
+    fun `getDigitalFeeds and getSecondHandFeeds use valid v16 channel urls with fallback`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[]}"""))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":[{"entityType":"feed","id":"d1","uid":"1","username":"Tech","message":"数码动态"}]}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":[{"entityType":"feed","feedType":"ershou","id":"e1","uid":"2","username":"Seller","ershou_product_title":"手表","ershou_price":"999"}]}"""
+            )
+        )
+
+        val digitalRes = api.getDigitalFeeds(page = 1)
+        assertTrue(digitalRes.isSuccess)
+        assertEquals(listOf("d1"), digitalRes.getOrThrow().map { it.id })
+        assertTrue(server.takeRequest().path.orEmpty().contains("url=V10_DIGITAL_HOME"))
+        assertTrue(server.takeRequest().path.orEmpty().contains("url=V10_CHANNEL_SJB"))
+
+        val ershouRes = api.getSecondHandFeeds(page = 1)
+        assertTrue(ershouRes.isSuccess)
+        assertEquals(listOf("e1"), ershouRes.getOrThrow().map { it.id })
+        assertTrue(server.takeRequest().path.orEmpty().contains("ershouList"))
+    }
+
+    @Test
+    fun `getCollectionItems falls back to favorite list for default collection and resolveFeedIdFromReply reads fid`() = runTest {
+        // default collection: /v6/collection/itemList empty -> /v6/collection/itemlist empty -> /v6/favorite/list returns feeds
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[]}"""))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":[{"entityType":"feed","id":"fav1","uid":"5","username":"FavAuthor","message":"默认收藏内容"}]}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":{"id":"777888","fid":"909090"}}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":[{"entityType":"history","id":"row1","title":"酷友A的动态","description":"feedCover","url":"/feed/556677"}]}"""
+            )
+        )
+
+        val colRes = api.getCollectionItems("1001", page = 1, isDefault = true)
+        assertTrue(colRes.isSuccess)
+        assertEquals(listOf("fav1"), colRes.getOrThrow().map { it.id })
+        assertEquals("/v6/collection/itemList?id=1001&page=1", server.takeRequest().path)
+        assertEquals("/v6/collection/itemlist?id=1001&page=1&listType=allFeedType", server.takeRequest().path)
+        assertEquals("/v6/favorite/list?type=feed&page=1", server.takeRequest().path)
+
+        val resolvedFeedId = api.resolveFeedIdFromReply("777888")
+        assertTrue(resolvedFeedId.isSuccess)
+        assertEquals("909090", resolvedFeedId.getOrThrow())
+        assertEquals("/v6/feed/replyDetail?id=777888", server.takeRequest().path)
+
+        val histRes = api.getCloudHitHistory(page = 1)
+        assertTrue(histRes.isSuccess)
+        assertEquals(listOf("556677"), histRes.getOrThrow().map { it.id })
+        assertEquals("/v6/user/hitHistoryList?type=feed&page=1", server.takeRequest().path)
     }
 }

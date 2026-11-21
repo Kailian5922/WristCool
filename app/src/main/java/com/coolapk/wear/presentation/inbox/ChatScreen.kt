@@ -44,11 +44,11 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import coil.compose.AsyncImage
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.WearScreenHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import com.coolapk.wear.presentation.detail.ComposerMode
@@ -134,10 +134,6 @@ fun ChatScreen(
                             transformationSpec = transformationSpec
                         )
                     }
-                }
-
-                if (uiState.isLoading && uiState.messages.isEmpty()) {
-                    item(key = "chat_loading") { WearLoadingPlaceholder() }
                 }
 
                 if (uiState.error != null && uiState.messages.isEmpty()) {
@@ -234,6 +230,8 @@ fun ChatScreen(
                 }
             }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && uiState.messages.isEmpty())
 
         previewImage?.let { url ->
             FullscreenImageViewer(

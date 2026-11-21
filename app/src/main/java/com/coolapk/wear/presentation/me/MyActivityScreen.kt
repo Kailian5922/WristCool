@@ -1,6 +1,7 @@
 package com.coolapk.wear.presentation.me
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,10 +36,10 @@ import com.coolapk.wear.data.repository.FeedUpdateBus
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.WearScreenHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import kotlinx.coroutines.Job
@@ -173,121 +174,121 @@ fun MyActivityScreen(
         onLoadMore = { viewModel.loadMore() }
     )
 
-    HorologistScaffold(scrollState = listState) { contentPadding ->
-        TransformingLazyColumn(
-            state = listState,
-            contentPadding = contentPadding,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryEventHandler(listState)
-        ) {
-            item(key = "act_header") {
-                WearScreenHeader(
-                    title = type.title,
-                    subtitle = if (itemCount > 0) "$itemCount 条" else null,
-                    transformationSpec = transformationSpec
-                )
-            }
-
-            if (uiState.isLoading && itemCount == 0) {
-                item(key = "act_loading") { WearLoadingPlaceholder() }
-            }
-
-            if (uiState.error != null && itemCount == 0) {
-                item(key = "act_error") {
-                    WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
-                }
-            }
-
-            if (itemCount == 0 && !uiState.isLoading && uiState.error == null) {
-                item(key = "act_empty") {
-                    WearEmptyState(
-                        text = if (type == MyActivityType.LIKES) "暂无点赞记录" else "暂无发表过的回复",
-                        icon = if (type == MyActivityType.LIKES) Icons.Rounded.FavoriteBorder else Icons.Rounded.ChatBubbleOutline
+    Box(modifier = Modifier.fillMaxSize()) {
+        HorologistScaffold(scrollState = listState) { contentPadding ->
+            TransformingLazyColumn(
+                state = listState,
+                contentPadding = contentPadding,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .rotaryEventHandler(listState)
+            ) {
+                item(key = "act_header") {
+                    WearScreenHeader(
+                        title = type.title,
+                        subtitle = if (itemCount > 0) "$itemCount 条" else null,
+                        transformationSpec = transformationSpec
                     )
                 }
-            }
 
-            if (type == MyActivityType.LIKES) {
-                itemsIndexed(uiState.feeds, key = { idx, f -> "${f.id}_$idx" }) { _, feed ->
-                    FeedCard(
-                        feed = feed,
-                        onClick = { onFeedClick(feed.id) },
-                        onUserClick = onUserClick,
-                        onTopicClick = onTopicClick,
-                        onProductClick = onProductClick,
-                        transformation = SurfaceTransformation(transformationSpec),
-                        modifier = Modifier
-                            .transformedHeight(this, transformationSpec)
-                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                    )
+                if (uiState.error != null && itemCount == 0) {
+                    item(key = "act_error") {
+                        WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
+                    }
                 }
-            } else {
-                itemsIndexed(uiState.replies, key = { idx, r -> "${r.id}_$idx" }) { _, reply ->
-                    Card(
-                        onClick = { if (reply.feedId.isNotBlank()) onFeedClick(reply.feedId) },
-                        transformation = SurfaceTransformation(transformationSpec),
-                        colors = CardDefaults.cardColors(
-                            containerColor = colorScheme.surfaceContainer,
-                            contentColor = colorScheme.onSurface
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, transformationSpec)
-                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
+
+                if (itemCount == 0 && !uiState.isLoading && uiState.error == null) {
+                    item(key = "act_empty") {
+                        WearEmptyState(
+                            text = if (type == MyActivityType.LIKES) "暂无点赞记录" else "暂无发表过的回复",
+                            icon = if (type == MyActivityType.LIKES) Icons.Rounded.FavoriteBorder else Icons.Rounded.ChatBubbleOutline
+                        )
+                    }
+                }
+
+                if (type == MyActivityType.LIKES) {
+                    itemsIndexed(uiState.feeds, key = { idx, f -> "${f.id}_$idx" }) { _, feed ->
+                        FeedCard(
+                            feed = feed,
+                            onClick = { onFeedClick(feed.id) },
+                            onUserClick = onUserClick,
+                            onTopicClick = onTopicClick,
+                            onProductClick = onProductClick,
+                            transformation = SurfaceTransformation(transformationSpec),
+                            modifier = Modifier
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
+                        )
+                    }
+                } else {
+                    itemsIndexed(uiState.replies, key = { idx, r -> "${r.id}_$idx" }) { _, reply ->
+                        Card(
+                            onClick = { if (reply.feedId.isNotBlank()) onFeedClick(reply.feedId) },
+                            transformation = SurfaceTransformation(transformationSpec),
+                            colors = CardDefaults.cardColors(
+                                containerColor = colorScheme.surfaceContainer,
+                                contentColor = colorScheme.onSurface
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
                         ) {
-                            Text(
-                                text = if (reply.targetUsername.isNotBlank()) "回复 @${reply.targetUsername}" else "我的回复",
-                                color = colorScheme.primary,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (reply.dateString.isNotBlank()) {
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 Text(
-                                    text = reply.dateString,
+                                    text = if (reply.targetUsername.isNotBlank()) "回复 @${reply.targetUsername}" else "我的回复",
+                                    color = colorScheme.primary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (reply.dateString.isNotBlank()) {
+                                    Text(
+                                        text = reply.dateString,
+                                        color = colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyExtraSmall
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = reply.message,
+                                color = colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (reply.feedTitle.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "原动态：${reply.feedTitle}",
                                     color = colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodyExtraSmall
+                                    style = MaterialTheme.typography.bodyExtraSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = reply.message,
-                            color = colorScheme.onSurface,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
+                    }
+                }
+
+                if (uiState.isLoadingMore || (!uiState.hasMore && itemCount > 0)) {
+                    item(key = "act_footer") {
+                        WearLoadMoreFooter(
+                            isLoadingMore = uiState.isLoadingMore,
+                            hasMore = uiState.hasMore,
+                            hasItems = itemCount > 0
                         )
-                        if (reply.feedTitle.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "原动态：${reply.feedTitle}",
-                                color = colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyExtraSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
                 }
             }
-
-            if (uiState.isLoadingMore || (!uiState.hasMore && itemCount > 0)) {
-                item(key = "act_footer") {
-                    WearLoadMoreFooter(
-                        isLoadingMore = uiState.isLoadingMore,
-                        hasMore = uiState.hasMore,
-                        hasItems = itemCount > 0
-                    )
-                }
-            }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && itemCount == 0)
     }
 }

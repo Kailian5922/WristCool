@@ -1,6 +1,7 @@
 package com.coolapk.wear.presentation.me
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.runtime.Composable
@@ -44,10 +46,11 @@ import com.coolapk.wear.data.repository.FeedUpdateBus
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
+import com.coolapk.wear.presentation.components.WearPillBadge
 import com.coolapk.wear.presentation.components.WearScreenHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import kotlinx.coroutines.Job
@@ -90,6 +93,7 @@ class CollectionsViewModel(
     private fun load(refresh: Boolean) {
         if (refresh) loadJob?.cancel() else if (loadJob?.isActive == true) return
         val targetPage = if (refresh) 1 else _uiState.value.page + 1
+        val isSelf = uid.isBlank() || uid == api.currentUid
         loadJob = viewModelScope.launch {
             _uiState.update {
                 if (refresh) it.copy(isLoading = true, isLoadingMore = false, error = null)
@@ -97,8 +101,21 @@ class CollectionsViewModel(
             }
             api.getUserCollections(uid, targetPage).onSuccess { list ->
                 _uiState.update { state ->
-                    val merged = if (refresh) list.distinctBy { it.id }
+                    val rawMerged = if (refresh) list.distinctBy { it.id }
                     else (state.collections + list).distinctBy { it.id }
+                    val merged = if (refresh && rawMerged.isEmpty() && isSelf) {
+                        listOf(
+                            CollectionItem(
+                                id = "default",
+                                uid = api.currentUid,
+                                title = "默认收藏夹",
+                                isOpen = false,
+                                isDefault = true
+                            )
+                        )
+                    } else {
+                        rawMerged
+                    }
                     val addedNew = refresh || merged.size > state.collections.size
                     state.copy(
                         collections = merged,
@@ -114,7 +131,7 @@ class CollectionsViewModel(
                     it.copy(
                         isLoading = false,
                         isLoadingMore = false,
-                        error = err.message ?: "加载收藏单失败"
+                        error = err.message ?: "加载收藏夹失败"
                     )
                 }
             }
@@ -134,6 +151,7 @@ data class CollectionDetailUiState(
 class CollectionDetailViewModel(
     private val api: CoolapkApi,
     private val collectionId: String,
+    private val isDefault: Boolean = false,
     private val feedUpdateBus: FeedUpdateBus? = null
 ) : ViewModel() {
 
@@ -171,7 +189,7 @@ class CollectionDetailViewModel(
                 if (refresh) it.copy(isLoading = true, isLoadingMore = false, error = null)
                 else it.copy(isLoadingMore = true)
             }
-            api.getCollectionItems(collectionId, targetPage).onSuccess { list ->
+            api.getCollectionItems(collectionId, targetPage, isDefault = isDefault).onSuccess { list ->
                 _uiState.update { state ->
                     val merged = if (refresh) list.distinctBy { it.id }
                     else (state.items + list).distinctBy { it.id }
@@ -190,7 +208,7 @@ class CollectionDetailViewModel(
                     it.copy(
                         isLoading = false,
                         isLoadingMore = false,
-                        error = err.message ?: "加载收藏单内容失败"
+                        error = err.message ?: "加载收藏内容失败"
                     )
                 }
             }
@@ -201,7 +219,7 @@ class CollectionDetailViewModel(
 @Composable
 fun CollectionsScreen(
     viewModel: CollectionsViewModel,
-    onCollectionClick: (id: String, title: String) -> Unit,
+    onCollectionClick: (id: String, title: String, isDefault: Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -217,116 +235,129 @@ fun CollectionsScreen(
         onLoadMore = { viewModel.loadMore() }
     )
 
-    HorologistScaffold(scrollState = listState) { contentPadding ->
-        TransformingLazyColumn(
-            state = listState,
-            contentPadding = contentPadding,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryEventHandler(listState)
-        ) {
-            item(key = "collections_header") {
-                WearScreenHeader(
-                    title = "云端收藏单",
-                    subtitle = if (uiState.collections.isNotEmpty()) "${uiState.collections.size} 个收藏单" else null,
-                    transformationSpec = transformationSpec
-                )
-            }
-
-            if (uiState.isLoading && uiState.collections.isEmpty()) {
-                item(key = "collections_loading") { WearLoadingPlaceholder() }
-            }
-
-            if (uiState.error != null && uiState.collections.isEmpty()) {
-                item(key = "collections_error") {
-                    WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
+    Box(modifier = Modifier.fillMaxSize()) {
+        HorologistScaffold(scrollState = listState) { contentPadding ->
+            TransformingLazyColumn(
+                state = listState,
+                contentPadding = contentPadding,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .rotaryEventHandler(listState)
+            ) {
+                item(key = "collections_header") {
+                    WearScreenHeader(
+                        title = "我的收藏",
+                        subtitle = if (uiState.collections.isNotEmpty()) "${uiState.collections.size} 个收藏夹" else null,
+                        transformationSpec = transformationSpec
+                    )
                 }
-            }
 
-            if (uiState.collections.isEmpty() && !uiState.isLoading && uiState.error == null) {
-                item(key = "collections_empty") {
-                    WearEmptyState("暂无云端收藏单", icon = Icons.Rounded.FolderSpecial)
+                if (uiState.error != null && uiState.collections.isEmpty()) {
+                    item(key = "collections_error") {
+                        WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
+                    }
                 }
-            }
 
-            itemsIndexed(uiState.collections, key = { idx, c -> "${c.id}_$idx" }) { _, collection ->
-                Card(
-                    onClick = { onCollectionClick(collection.id, collection.title) },
-                    transformation = SurfaceTransformation(transformationSpec),
-                    colors = CardDefaults.cardColors(
-                        containerColor = colorScheme.surfaceContainer,
-                        contentColor = colorScheme.onSurface
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .transformedHeight(this, transformationSpec)
-                        .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        if (collection.cover.isNotBlank()) {
-                            AsyncImage(
-                                model = collection.cover,
-                                contentDescription = collection.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(colorScheme.surfaceContainerHigh)
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.FolderSpecial,
-                                contentDescription = null,
-                                tint = colorScheme.primary,
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = collection.title,
-                                    color = colorScheme.onSurface,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
+                if (uiState.collections.isEmpty() && !uiState.isLoading && uiState.error == null) {
+                    item(key = "collections_empty") {
+                        WearEmptyState("暂无收藏夹", icon = Icons.Rounded.Bookmark)
+                    }
+                }
+
+                itemsIndexed(uiState.collections, key = { idx, c -> "${c.id}_$idx" }) { _, collection ->
+                    Card(
+                        onClick = { onCollectionClick(collection.id, collection.title, collection.isDefault) },
+                        transformation = SurfaceTransformation(transformationSpec),
+                        colors = CardDefaults.cardColors(
+                            containerColor = colorScheme.surfaceContainer,
+                            contentColor = colorScheme.onSurface
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            if (collection.cover.isNotBlank()) {
+                                AsyncImage(
+                                    model = collection.cover,
+                                    contentDescription = collection.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(colorScheme.surfaceContainerHigh)
                                 )
-                                if (!collection.isOpen) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(
-                                        imageVector = Icons.Rounded.Lock,
-                                        contentDescription = "私密",
-                                        tint = colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(11.dp)
-                                    )
-                                }
+                            } else {
+                                Icon(
+                                    imageVector = if (collection.isDefault) Icons.Rounded.Bookmark else Icons.Rounded.FolderSpecial,
+                                    contentDescription = null,
+                                    tint = if (collection.isDefault) colorScheme.tertiary else colorScheme.primary,
+                                    modifier = Modifier.size(26.dp)
+                                )
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "${collection.itemNum} 条内容" +
-                                    if (collection.description.isNotBlank()) " · ${collection.description}" else "",
-                                color = colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyExtraSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = collection.title,
+                                        color = colorScheme.onSurface,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (collection.isDefault) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        WearPillBadge(
+                                            text = "默认",
+                                            containerColor = colorScheme.tertiaryContainer,
+                                            contentColor = colorScheme.onTertiaryContainer
+                                        )
+                                    }
+                                    if (!collection.isOpen) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Rounded.Lock,
+                                            contentDescription = "私密",
+                                            tint = colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                val countText = when {
+                                    collection.itemNum > 0 -> "${collection.itemNum} 条内容"
+                                    collection.isDefault && collection.description.isBlank() -> "系统默认收藏夹"
+                                    else -> "${collection.itemNum} 条内容"
+                                }
+                                Text(
+                                    text = countText +
+                                        if (collection.description.isNotBlank()) " · ${collection.description}" else "",
+                                    color = colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyExtraSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            if (uiState.isLoadingMore || (!uiState.hasMore && uiState.collections.isNotEmpty())) {
-                item(key = "collections_footer") {
-                    WearLoadMoreFooter(
-                        isLoadingMore = uiState.isLoadingMore,
-                        hasMore = uiState.hasMore,
-                        hasItems = uiState.collections.isNotEmpty()
-                    )
+                if (uiState.isLoadingMore || (!uiState.hasMore && uiState.collections.isNotEmpty())) {
+                    item(key = "collections_footer") {
+                        WearLoadMoreFooter(
+                            isLoadingMore = uiState.isLoadingMore,
+                            hasMore = uiState.hasMore,
+                            hasItems = uiState.collections.isNotEmpty()
+                        )
+                    }
                 }
             }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && uiState.collections.isEmpty())
     }
 }
 
@@ -352,59 +383,59 @@ fun CollectionDetailScreen(
         onLoadMore = { viewModel.loadMore() }
     )
 
-    HorologistScaffold(scrollState = listState) { contentPadding ->
-        TransformingLazyColumn(
-            state = listState,
-            contentPadding = contentPadding,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryEventHandler(listState)
-        ) {
-            item(key = "col_detail_header") {
-                WearScreenHeader(
-                    title = title.ifBlank { "收藏单" },
-                    subtitle = "${uiState.items.size} 条动态",
-                    transformationSpec = transformationSpec
-                )
-            }
-
-            if (uiState.isLoading && uiState.items.isEmpty()) {
-                item(key = "col_detail_loading") { WearLoadingPlaceholder() }
-            }
-
-            if (uiState.error != null && uiState.items.isEmpty()) {
-                item(key = "col_detail_error") {
-                    WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
-                }
-            }
-
-            if (uiState.items.isEmpty() && !uiState.isLoading && uiState.error == null) {
-                item(key = "col_detail_empty") { WearEmptyState("该收藏单暂无动态") }
-            }
-
-            itemsIndexed(uiState.items, key = { idx, feed -> "${feed.id}_$idx" }) { _, feed ->
-                FeedCard(
-                    feed = feed,
-                    onClick = { onFeedClick(feed.id) },
-                    onUserClick = onUserClick,
-                    onTopicClick = onTopicClick,
-                    onProductClick = onProductClick,
-                    transformation = SurfaceTransformation(transformationSpec),
-                    modifier = Modifier
-                        .transformedHeight(this, transformationSpec)
-                        .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                )
-            }
-
-            if (uiState.isLoadingMore || (!uiState.hasMore && uiState.items.isNotEmpty())) {
-                item(key = "col_detail_footer") {
-                    WearLoadMoreFooter(
-                        isLoadingMore = uiState.isLoadingMore,
-                        hasMore = uiState.hasMore,
-                        hasItems = uiState.items.isNotEmpty()
+    Box(modifier = Modifier.fillMaxSize()) {
+        HorologistScaffold(scrollState = listState) { contentPadding ->
+            TransformingLazyColumn(
+                state = listState,
+                contentPadding = contentPadding,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .rotaryEventHandler(listState)
+            ) {
+                item(key = "col_detail_header") {
+                    WearScreenHeader(
+                        title = title.ifBlank { "我的收藏" },
+                        subtitle = if (uiState.items.isNotEmpty()) "${uiState.items.size} 条动态" else null,
+                        transformationSpec = transformationSpec
                     )
+                }
+
+                if (uiState.error != null && uiState.items.isEmpty()) {
+                    item(key = "col_detail_error") {
+                        WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
+                    }
+                }
+
+                if (uiState.items.isEmpty() && !uiState.isLoading && uiState.error == null) {
+                    item(key = "col_detail_empty") { WearEmptyState("该收藏夹暂无动态") }
+                }
+
+                itemsIndexed(uiState.items, key = { idx, feed -> "${feed.id}_$idx" }) { _, feed ->
+                    FeedCard(
+                        feed = feed,
+                        onClick = { onFeedClick(feed.id) },
+                        onUserClick = onUserClick,
+                        onTopicClick = onTopicClick,
+                        onProductClick = onProductClick,
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
+                    )
+                }
+
+                if (uiState.isLoadingMore || (!uiState.hasMore && uiState.items.isNotEmpty())) {
+                    item(key = "col_detail_footer") {
+                        WearLoadMoreFooter(
+                            isLoadingMore = uiState.isLoadingMore,
+                            hasMore = uiState.hasMore,
+                            hasItems = uiState.items.isNotEmpty()
+                        )
+                    }
                 }
             }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && uiState.items.isEmpty())
     }
 }

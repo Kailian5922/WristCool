@@ -219,8 +219,9 @@ class ViewModelRegressionTest {
         vm.enterMultiSelectMode("f1")
         vm.toggleSelection("f2")
 
-        // f1 succeeds, f2 fails on both /v6/feed/unFavorite and /v6/feed/unfavorite
+        // f1 succeeds, f2 fails on GET unFavorite, GET unfavorite, and POST unFavorite fallbacks
         server.enqueue(MockResponse().setBody("""{"data":1}"""))
+        server.enqueue(MockResponse().setBody("""{"status":-1,"message":"失败"}"""))
         server.enqueue(MockResponse().setBody("""{"status":-1,"message":"失败"}"""))
         server.enqueue(MockResponse().setBody("""{"status":-1,"message":"失败"}"""))
 

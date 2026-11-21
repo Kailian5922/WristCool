@@ -159,6 +159,28 @@ class InboxViewModel(
         }
     }
 
+    fun resolveNotificationFeed(
+        item: NotificationItem,
+        onResolved: (String?) -> Unit
+    ) {
+        if (item.feedId.isNotBlank()) {
+            onResolved(item.feedId)
+            return
+        }
+        if (item.replyId.isBlank()) {
+            onResolved(null)
+            return
+        }
+        viewModelScope.launch {
+            api.resolveFeedIdFromReply(item.replyId).onSuccess { feedId ->
+                onResolved(feedId)
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionMessage = err.message ?: "无法打开原动态") }
+                onResolved(null)
+            }
+        }
+    }
+
     fun clearActionMessage() {
         _uiState.update { it.copy(actionMessage = null) }
     }

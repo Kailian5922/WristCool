@@ -36,7 +36,14 @@ object CoolapkJsonParser {
         "apk", "app", "goods", "product", "topic", "sponsorcard", "nomoredatacard"
     )
 
-    private val EXPLICIT_FEED_TYPES = setOf("feed", "feedarticle", "picture", "article", "news")
+    private val EXPLICIT_FEED_TYPES = setOf(
+        "feed", "feedarticle", "picture", "article", "news",
+        "ershou", "feedershou", "question", "answer", "rating", "discovery"
+    )
+
+    private val HISTORY_PLACEHOLDER_DESC = setOf(
+        "feedcover", "feed", "feedarticle", "history", "picture", "ershou"
+    )
 
     /**
      * 检查酷安 JSON 业务错误。
@@ -75,13 +82,129 @@ object CoolapkJsonParser {
         return result
     }
 
+    /**
+     * 解析云端浏览足迹（`/v6/user/hitHistoryList?type=feed`）。
+     * 酷安云端足迹既可能返回嵌套 `feed` / `targetRow`，也可能返回扁平 `entityType: "history"` 记录
+     *（真实动态 ID 在 `url: "/feed/123456"` 或 `target_id`/`feed_id` 中，作者常编码在 `title: "xxx的动态"`）。
+     */
+    fun parseCloudHistoryList(responseBody: String): List<FeedItem> {
+        if (responseBody.isBlank()) return emptyList()
+        val json = JSONObject(responseBody)
+        val dataArray = json.optJSONArray("data") ?: return emptyList()
+        return buildList {
+            for (i in 0 until dataArray.length()) {
+                val item = dataArray.optJSONObject(i) ?: continue
+                parseCloudHistoryEntry(item)?.let(::add)
+            }
+        }
+    }
+
+    private fun parseCloudHistoryEntry(obj: JSONObject): FeedItem? {
+        val nestedFeed = obj.optJSONObject("feed")
+            ?: obj.optJSONObject("targetRow")?.takeIf { isFeedLikeJson(it) }
+        if (nestedFeed != null) {
+            parseSingleFeed(nestedFeed)?.let { return it }
+        }
+
+        val entityType = optStringClean(obj, "entityType").lowercase(Locale.ROOT)
+        if (entityType.isNotBlank() && entityType != "history" && entityType != "recenthistory") {
+            return parseSingleFeed(obj)
+        }
+
+        val historyType = optStringClean(obj, "historyType", "history_type", "targetType", "target_type")
+            .lowercase(Locale.ROOT)
+        val rawUrl = optStringClean(obj, "url", "targetUrl", "target_url")
+        val feedIdFromUrl = extractFeedIdFromUrl(rawUrl)
+
+        val isExplicitNonFeedHistory = historyType.isNotBlank() &&
+            historyType != "feed" &&
+            historyType != "feedarticle" &&
+            historyType != "picture" &&
+            historyType != "ershou"
+        if (isExplicitNonFeedHistory && feedIdFromUrl.isBlank()) {
+            return null
+        }
+        if (rawUrl.isNotBlank() && feedIdFromUrl.isBlank()) {
+            val lowerUrl = rawUrl.lowercase(Locale.ROOT)
+            if (lowerUrl.startsWith("/u/") ||
+                lowerUrl.startsWith("/t/") ||
+                lowerUrl.startsWith("/apk/") ||
+                lowerUrl.startsWith("/product/") ||
+                lowerUrl.startsWith("/collection/")
+            ) {
+                return null
+            }
+        }
+
+        val feedId = optStringClean(obj, "feed_id", "feedId", "fid", "target_id", "targetId")
+            .takeIf { it.all(Char::isDigit) && it.isNotEmpty() }
+            ?: feedIdFromUrl.ifBlank { optStringClean(obj, "id", "entityId") }
+        if (feedId.isBlank()) return null
+
+        val userInfo = obj.optJSONObject("userInfo") ?: obj.optJSONObject("user")
+        val rawTitle = TextSanitizer.cleanHtmlTags(optStringClean(obj, "title", "message_title"))
+        val rawUsername = optUserField(obj, userInfo, "username", "displayUserName").ifBlank {
+            if (rawTitle.endsWith("的动态") && rawTitle.length > 3) {
+                rawTitle.removeSuffix("的动态").trim()
+            } else {
+                ""
+            }
+        }
+        val username = rawUsername.ifBlank { "酷友" }
+        val filteredTitle = if (rawTitle == "${username}的动态") {
+            ""
+        } else {
+            TextSanitizer.filterAutoTitle(rawTitle, username)
+        }
+
+        val rawDesc = TextSanitizer.cleanHtmlTags(
+            optStringClean(obj, "description", "message", "detail", "content", "subTitle")
+        )
+        val cleanDesc = if (HISTORY_PLACEHOLDER_DESC.contains(rawDesc.lowercase(Locale.ROOT))) {
+            ""
+        } else {
+            rawDesc
+        }
+        val message = cleanDesc.ifBlank { filteredTitle }.ifBlank { "查看历史动态 #$feedId" }
+
+        val rawLogo = optUserField(obj, userInfo, "userAvatar", "avatar")
+            .ifBlank { optStringClean(obj, "logo") }
+        val userAvatar = normalizeCoolapkAssetUrl(rawLogo)
+        val pics = buildList {
+            val picUrl = normalizeCoolapkAssetUrl(optStringClean(obj, "pic", "cover", "image"))
+            if (picUrl.isNotBlank()) add(picUrl)
+        }
+        val uid = optUserField(obj, userInfo, "uid")
+        val dateline = obj.optLong("dateline", obj.optLong("lastupdate", 0L))
+
+        return FeedItem(
+            id = feedId,
+            uid = uid,
+            username = username,
+            userAvatar = userAvatar,
+            dateline = dateline,
+            dateString = TextSanitizer.formatRelativeTime(dateline),
+            deviceTitle = "",
+            title = if (filteredTitle == message) "" else filteredTitle,
+            message = message,
+            picArr = pics,
+            feedType = historyType.ifBlank { "feed" }
+        )
+    }
+
     private fun appendFeedRecursive(obj: JSONObject, list: MutableList<FeedItem>) {
-        // 如果卡片包含子 entities 动态列表，说明是容器卡片，仅递归解析内部真实动态，严禁将容器自身作为动态添加
-        val entities = obj.optJSONArray("entities")
-        if (entities != null && entities.length() > 0) {
-            for (j in 0 until entities.length()) {
-                val sub = entities.optJSONObject(j) ?: continue
-                appendFeedRecursive(sub, list)
+        // 如果卡片包含子 entities / dataRows / extraEntities 动态列表，说明是容器卡片，仅递归解析内部真实动态
+        val childArrays = listOfNotNull(
+            obj.optJSONArray("entities"),
+            obj.optJSONArray("dataRows"),
+            obj.optJSONArray("extraEntities")
+        )
+        if (childArrays.any { it.length() > 0 }) {
+            for (arr in childArrays) {
+                for (j in 0 until arr.length()) {
+                    val sub = arr.optJSONObject(j) ?: continue
+                    appendFeedRecursive(sub, list)
+                }
             }
             return
         }
@@ -95,8 +218,13 @@ object CoolapkJsonParser {
             return null
         }
 
-        // 兼容云端足迹 (hitHistoryList) 将动态包在 inner target / feed 字段中的情况
-        val effectiveObj = if (entityType == "history" || entityType == "recenthistory") {
+        // 兼容云端足迹 (hitHistoryList) 与收藏单条目将动态包在 inner target / feed 字段中的情况
+        val effectiveObj = if (
+            entityType == "history" ||
+            entityType == "recenthistory" ||
+            entityType == "collection_item" ||
+            entityType == "collectionitem"
+        ) {
             obj.optJSONObject("feed") ?: obj.optJSONObject("targetRow") ?: obj
         } else {
             obj
@@ -113,38 +241,37 @@ object CoolapkJsonParser {
         val rawOutput = optStringClean(effectiveObj, "message_raw_output")
         val articleBlocks = parseArticleBlocks(rawOutput)
 
-        if (rawMessage.isBlank() && rawTitle.isBlank() && articleBlocks.isEmpty()) {
-            return null
-        }
-
         val userInfo = effectiveObj.optJSONObject("userInfo") ?: effectiveObj.optJSONObject("user")
         val rawUsername = optUserField(effectiveObj, userInfo, "username", "displayUserName")
-        if (userInfo == null && rawUsername.isBlank() && !EXPLICIT_FEED_TYPES.contains(entityType)) {
+        val effectiveType = optStringClean(effectiveObj, "feedType", "feed_type", "entityType")
+            .lowercase(Locale.ROOT)
+        if (userInfo == null &&
+            rawUsername.isBlank() &&
+            !EXPLICIT_FEED_TYPES.contains(entityType) &&
+            !EXPLICIT_FEED_TYPES.contains(effectiveType)
+        ) {
             return null
         }
 
-        val message = if (rawMessage.isNotBlank()) {
-            TextSanitizer.cleanHtmlTags(rawMessage)
-        } else {
-            articleBlocks.filter { it.type == "text" && it.text.isNotBlank() }
-                .joinToString("\n") { it.text }
-                .trim()
-        }
-        val username = rawUsername.ifBlank { "酷友" }
-        val title = TextSanitizer.filterAutoTitle(rawTitle, username)
-        val userAvatar = TextSanitizer.normalizeImageUrl(optUserField(effectiveObj, userInfo, "userAvatar", "avatar"))
-        val uid = optUserField(effectiveObj, userInfo, "uid")
-
-        val dateline = effectiveObj.optLong("dateline", effectiveObj.optLong("lastupdate", 0L))
-        val dateString = TextSanitizer.formatRelativeTime(dateline)
-        val deviceTitle = optStringClean(effectiveObj, "device_title", "deviceTitle")
-        val feedType = optStringClean(effectiveObj, "feedType", "feed_type", "entityType").ifBlank { "feed" }
+        // 提取二手商品扩展信息（ershou_info / ershou_price / ershou_product_title）
+        val ershouInfo = effectiveObj.optJSONObject("ershou_info")
+            ?: effectiveObj.optJSONObject("ershouInfo")
+        val ershouPrice = optStringClean(effectiveObj, "ershou_price", "price")
+            .ifBlank { ershouInfo?.let { optStringClean(it, "price", "ershou_price") }.orEmpty() }
+            .takeIf { it.isNotBlank() && it != "0" && it != "0.00" }
+        val ershouProduct = optStringClean(effectiveObj, "ershou_product_title", "product_title")
+            .ifBlank { ershouInfo?.let { optStringClean(it, "product_title", "title") }.orEmpty() }
 
         val pics = mutableListOf<String>()
         val picArr = effectiveObj.optJSONArray("picArr")
         if (picArr != null) {
             for (p in 0 until picArr.length()) {
-                val picUrl = picArr.optString(p, "").trim()
+                val rawPic = picArr.opt(p)
+                val picUrl = when (rawPic) {
+                    is String -> rawPic.trim()
+                    is JSONObject -> optStringClean(rawPic, "url", "pic", "source")
+                    else -> ""
+                }
                 if (picUrl.isNotBlank() && !picUrl.equals("null", ignoreCase = true)) {
                     val normalized = TextSanitizer.normalizeImageUrl(picUrl)
                     if (normalized.isNotBlank()) pics.add(normalized)
@@ -157,6 +284,45 @@ object CoolapkJsonParser {
             )
             if (singlePic.isNotBlank()) pics.add(singlePic)
         }
+
+        if (rawMessage.isBlank() &&
+            rawTitle.isBlank() &&
+            articleBlocks.isEmpty() &&
+            ershouProduct.isBlank() &&
+            pics.isEmpty()
+        ) {
+            return null
+        }
+
+        val message = if (rawMessage.isNotBlank()) {
+            TextSanitizer.cleanHtmlTags(rawMessage)
+        } else if (articleBlocks.isNotEmpty()) {
+            articleBlocks.filter { it.type == "text" && it.text.isNotBlank() }
+                .joinToString("\n") { it.text }
+                .trim()
+        } else if (ershouProduct.isNotBlank()) {
+            if (!ershouPrice.isNullOrBlank()) "¥$ershouPrice · $ershouProduct" else ershouProduct
+        } else {
+            ""
+        }
+        val username = rawUsername.ifBlank { "酷友" }
+        val baseTitle = TextSanitizer.filterAutoTitle(rawTitle, username)
+        val title = if (baseTitle.isBlank() && !ershouPrice.isNullOrBlank() && ershouProduct.isNotBlank()) {
+            "¥$ershouPrice $ershouProduct"
+        } else if (baseTitle.isNotBlank() && !ershouPrice.isNullOrBlank() && !baseTitle.contains("¥") && effectiveType == "ershou") {
+            "¥$ershouPrice · $baseTitle"
+        } else {
+            baseTitle
+        }
+        val userAvatar = TextSanitizer.normalizeImageUrl(optUserField(effectiveObj, userInfo, "userAvatar", "avatar"))
+        val uid = optUserField(effectiveObj, userInfo, "uid")
+
+        val dateline = effectiveObj.optLong("dateline", effectiveObj.optLong("lastupdate", 0L))
+        val dateString = TextSanitizer.formatRelativeTime(dateline)
+        val deviceTitle = optStringClean(effectiveObj, "device_title", "deviceTitle").ifBlank {
+            if (effectiveType == "ershou" && !ershouPrice.isNullOrBlank()) "闲置 ¥$ershouPrice" else ""
+        }
+        val feedType = optStringClean(effectiveObj, "feedType", "feed_type", "entityType").ifBlank { "feed" }
 
         val likeNum = effectiveObj.optInt("likenum", effectiveObj.optInt("like_num", 0))
         val replyNum = effectiveObj.optInt("replynum", effectiveObj.optInt("reply_num", 0))
@@ -669,34 +835,71 @@ object CoolapkJsonParser {
             for (i in 0 until dataArray.length()) {
                 val obj = dataArray.optJSONObject(i) ?: continue
                 val id = optStringClean(obj, "id", "entityId").ifBlank { "n_$i" }
-                val fromUserInfo = obj.optJSONObject("fromUserInfo")
-                    ?: obj.optJSONObject("likeUserInfo")
+                val fromUserInfo = obj.optJSONObject("likeUserInfo")
+                    ?: obj.optJSONObject("fromUserInfo")
                     ?: obj.optJSONObject("userInfo")
-                val fromUid = optStringClean(obj, "fromuid", "likeUid", "uid")
+                val fromUid = optStringClean(obj, "likeUid", "fromuid", "uid")
                     .ifBlank { fromUserInfo?.let { optStringClean(it, "uid") }.orEmpty() }
-                val fromUsername = optStringClean(obj, "fromusername", "likeUsername", "username")
+                val fromUsername = optStringClean(obj, "likeUsername", "fromusername", "username")
                     .ifBlank { fromUserInfo?.let { optStringClean(it, "username", "displayUserName") }.orEmpty() }
                     .ifBlank { "酷友" }
                 val fromAvatar = TextSanitizer.normalizeImageUrl(
-                    optStringClean(obj, "fromUserAvatar", "likeAvatar", "userAvatar")
+                    optStringClean(obj, "likeAvatar", "fromUserAvatar", "userAvatar")
                         .ifBlank { fromUserInfo?.let { optStringClean(it, "userAvatar", "avatar") }.orEmpty() }
                 )
-                val note = TextSanitizer.cleanHtmlTags(optStringClean(obj, "note"))
-                val message = TextSanitizer.cleanHtmlTags(optStringClean(obj, "message", "reply_message"))
-                val feedObj = obj.optJSONObject("feed") ?: obj.optJSONObject("extra")
-                val feedId = optStringClean(obj, "fid", "feed_id", "source_id")
-                    .ifBlank { feedObj?.let { optStringClean(it, "id", "feed_id") }.orEmpty() }
-                    .ifBlank { extractFeedIdFromUrl(optStringClean(obj, "url", "note")) }
+
+                val feedInfoObj = obj.optJSONObject("feedInfo")
+                val targetFeedObj = obj.optJSONObject("targetFeed")
+                val targetRowObj = obj.optJSONObject("targetRow")
+                val legacyFeedObj = obj.optJSONObject("feed") ?: obj.optJSONObject("extra")
+                val candidates = listOfNotNull(obj, feedInfoObj, targetFeedObj, targetRowObj, legacyFeedObj)
+
+                val isLikeRecord = obj.optLong("likeTime", 0L) > 0L ||
+                    obj.optJSONObject("likeUserInfo") != null ||
+                    optStringClean(obj, "likeUid", "likeUsername").isNotBlank()
+
+                val rawNote = optStringClean(obj, "note")
+                val cleanNote = TextSanitizer.cleanHtmlTags(rawNote).ifBlank {
+                    if (isLikeRecord) {
+                        val targetLabel = TextSanitizer.cleanHtmlTags(
+                            optStringClean(obj, "feedTypeName", "infoHtml")
+                        ).ifBlank { "动态" }
+                        "赞了你的$targetLabel"
+                    } else {
+                        TextSanitizer.cleanHtmlTags(
+                            optStringClean(obj, "message_title")
+                                .ifBlank { feedInfoObj?.let { optStringClean(it, "message_title") }.orEmpty() }
+                        )
+                    }
+                }
+
+                val firstReplyRowMsg = obj.optJSONArray("replyRows")
+                    ?.optJSONObject(0)
+                    ?.let { optStringClean(it, "message") }
+                    .orEmpty()
+                val message = TextSanitizer.cleanHtmlTags(
+                    optStringClean(obj, "message", "reply_message")
+                        .ifBlank { firstReplyRowMsg }
+                        .ifBlank { feedInfoObj?.let { optStringClean(it, "message") }.orEmpty() }
+                        .ifBlank { targetRowObj?.let { optStringClean(it, "message") }.orEmpty() }
+                )
+
+                val feedId = extractNotificationFeedId(obj, candidates)
+                val replyId = extractNotificationReplyId(candidates)
+
                 val targetTitle = TextSanitizer.cleanHtmlTags(
-                    optStringClean(obj, "feedTitle", "title", "rtitle")
-                        .ifBlank { feedObj?.let { optStringClean(it, "title", "message") }.orEmpty() }
+                    optStringClean(obj, "targetTitle", "feedTitle", "rtitle", "title")
+                        .ifBlank { feedInfoObj?.let { optStringClean(it, "message_title", "title", "message") }.orEmpty() }
+                        .ifBlank { targetFeedObj?.let { optStringClean(it, "message_title", "title", "message") }.orEmpty() }
+                        .ifBlank { targetRowObj?.let { optStringClean(it, "title", "message") }.orEmpty() }
+                        .ifBlank { legacyFeedObj?.let { optStringClean(it, "title", "message") }.orEmpty() }
                 )
                 val dateline = obj.optLong("likeTime", obj.optLong("dateline", 0L))
                 val dateString = TextSanitizer.formatRelativeTime(dateline)
                 val isNew = obj.optInt("isnew", 0) == 1
                 val type = optStringClean(obj, "type", "entityType")
 
-                if (note.isBlank() && message.isBlank() && targetTitle.isBlank()) continue
+                if (cleanNote.isBlank() && message.isBlank() && targetTitle.isBlank()) continue
                 add(
                     NotificationItem(
                         id = id,
@@ -704,16 +907,35 @@ object CoolapkJsonParser {
                         fromUid = fromUid,
                         fromUsername = fromUsername,
                         fromAvatar = fromAvatar,
-                        note = note,
+                        note = cleanNote,
                         message = message,
                         targetTitle = targetTitle,
                         feedId = feedId,
+                        replyId = replyId,
                         dateline = dateline,
                         dateString = dateString,
                         isNew = isNew
                     )
                 )
             }
+        }
+    }
+
+    /**
+     * 解析 `/v6/feed/replyDetail?id={replyId}` 响应中的所属动态 ID，
+     * 供消息页点击「评论@我 / 点赞评论」类通知时反查原动态。
+     */
+    fun parseReplyFeedId(responseBody: String): String {
+        if (responseBody.isBlank()) return ""
+        return try {
+            val json = JSONObject(responseBody)
+            val data = json.optJSONObject("data") ?: return ""
+            val feedObj = data.optJSONObject("feed") ?: data.optJSONObject("feedInfo")
+            normalizeNumericFeedId(optStringClean(data, "fid", "feedId", "feed_id"))
+                .ifBlank { feedObj?.let { normalizeNumericFeedId(optStringClean(it, "id", "feed_id")) }.orEmpty() }
+                .ifBlank { extractFeedIdFromUrl(optStringClean(data, "url", "targetUrl")) }
+        } catch (_: Exception) {
+            ""
         }
     }
 
@@ -841,33 +1063,59 @@ object CoolapkJsonParser {
         return buildList {
             for (i in 0 until dataArray.length()) {
                 val obj = dataArray.optJSONObject(i) ?: continue
-                val entityType = optStringClean(obj, "entityType").lowercase(Locale.ROOT)
-                if (entityType.isNotBlank() && entityType != "collection") continue
-                val id = optStringClean(obj, "id", "collectionId", "entityId")
-                val title = optStringClean(obj, "title", "name")
-                if (id.isBlank() || title.isBlank()) continue
-                val rawCover = optStringClean(obj, "cover", "coverPic", "cover_pic", "pic", "logo")
-                val cover = if (rawCover.startsWith("http", ignoreCase = true) || rawCover.startsWith("//")) {
-                    TextSanitizer.normalizeImageUrl(rawCover)
-                } else if (rawCover.isNotBlank()) {
-                    "https://image.coolapk.com/${rawCover.trimStart('/')}"
+                val entities = obj.optJSONArray("entities")
+                if (entities != null && entities.length() > 0) {
+                    for (j in 0 until entities.length()) {
+                        entities.optJSONObject(j)?.let(::parseSingleCollection)?.let(::add)
+                    }
                 } else {
-                    ""
+                    parseSingleCollection(obj)?.let(::add)
                 }
-                add(
-                    CollectionItem(
-                        id = id,
-                        uid = optStringClean(obj, "uid", "userId", "user_id"),
-                        title = title,
-                        description = TextSanitizer.cleanHtmlTags(optStringClean(obj, "description", "summary")),
-                        cover = cover,
-                        itemNum = obj.optInt("itemNum", obj.optInt("item_num", obj.optInt("itemnum", obj.optInt("feed_num", 0)))),
-                        followNum = obj.optInt("follownum", obj.optInt("followNum", obj.optInt("follow_num", 0))),
-                        isOpen = obj.optInt("isOpen", obj.optInt("is_open", 1)) != 0
-                    )
-                )
             }
         }
+    }
+
+    private fun parseSingleCollection(obj: JSONObject): CollectionItem? {
+        val entityType = optStringClean(obj, "entityType").lowercase(Locale.ROOT)
+        if (entityType.isNotBlank() && entityType != "collection") return null
+        val id = optStringClean(obj, "id", "collectionId", "entityId")
+        val rawTitle = optStringClean(obj, "title", "name")
+        val lowerTitle = rawTitle.lowercase(Locale.ROOT)
+        val isDefaultFlag = isTruthyFlag(obj, "defaultCollected", "default_collected", "isDefault", "is_default", "isDefaultCollection")
+        val isDefault = isDefaultFlag ||
+            id == "0" ||
+            lowerTitle == "默认收藏" ||
+            lowerTitle == "默认收藏夹" ||
+            lowerTitle == "默认收藏单" ||
+            lowerTitle.startsWith("默认收藏") ||
+            lowerTitle == "default collection" ||
+            lowerTitle == "default favorites"
+        val title = rawTitle.ifBlank { if (isDefault || entityType == "collection") "默认收藏夹" else "" }
+        if (id.isBlank() || title.isBlank()) return null
+
+        val cover = normalizeCoolapkAssetUrl(
+            optStringClean(obj, "cover", "coverPic", "cover_pic", "pic", "logo")
+        )
+        return CollectionItem(
+            id = id,
+            uid = optStringClean(obj, "uid", "userId", "user_id"),
+            title = title,
+            description = TextSanitizer.cleanHtmlTags(optStringClean(obj, "description", "summary")),
+            cover = cover,
+            itemNum = obj.optInt(
+                "itemNum",
+                obj.optInt(
+                    "item_num",
+                    obj.optInt(
+                        "itemnum",
+                        obj.optInt("feedNum", obj.optInt("feed_num", obj.optInt("count", 0)))
+                    )
+                )
+            ),
+            followNum = obj.optInt("follownum", obj.optInt("followNum", obj.optInt("follow_num", 0))),
+            isOpen = obj.optInt("isOpen", obj.optInt("is_open", 1)) != 0,
+            isDefault = isDefault
+        )
     }
 
     fun parseProductDetail(responseBody: String): ProductItem? {
@@ -1017,11 +1265,128 @@ object CoolapkJsonParser {
         }
     }
 
-    private val FEED_URL_ID_REGEX = Regex("""/feed/(\d+)""")
+    private val FEED_URL_ID_REGEX = Regex("""(?:^|[/?#])feed/(\d+)""", RegexOption.IGNORE_CASE)
+    private val REPLY_URL_ID_REGEX = Regex("""(?:/feed/reply/|/reply/)(\d+)""", RegexOption.IGNORE_CASE)
+    private val REPLY_QUERY_ID_REGEX = Regex("""[?&#](?:replyId|reply_id|rid)=(\d+)""", RegexOption.IGNORE_CASE)
+    private val NON_FEED_TARGET_REGEX = Regex("""product|device|apk|app|game|goods|user|topic|dyh|album|reply|comment""")
+    private val REPLY_TYPE_REGEX = Regex("""reply|comment""")
 
     private fun extractFeedIdFromUrl(text: String): String {
         if (text.isBlank()) return ""
         return FEED_URL_ID_REGEX.find(text)?.groupValues?.getOrNull(1).orEmpty()
+    }
+
+    private fun normalizeNumericFeedId(raw: String): String {
+        val cleaned = raw.trim().removePrefix("feed:").removePrefix("FEED:").trim()
+        return if (cleaned.isNotEmpty() && cleaned != "0" && cleaned.all(Char::isDigit)) cleaned else ""
+    }
+
+    private fun combinedTypeString(obj: JSONObject): String = listOf(
+        optStringClean(obj, "entityType", "entity_type"),
+        optStringClean(obj, "feedType", "feed_type"),
+        optStringClean(obj, "targetType", "target_type"),
+        optStringClean(obj, "type")
+    ).filter { it.isNotBlank() }.joinToString(" ").lowercase(Locale.ROOT)
+
+    private fun hasExplicitFeedType(obj: JSONObject): Boolean {
+        val typeStr = combinedTypeString(obj)
+        return (typeStr.contains("feed") && !REPLY_TYPE_REGEX.containsMatchIn(typeStr)) ||
+            normalizeNumericFeedId(optStringClean(obj, "feedId", "feed_id", "fid")).isNotEmpty()
+    }
+
+    private fun isFeedLikeJson(obj: JSONObject): Boolean {
+        if (hasExplicitFeedType(obj)) return true
+        val typeStr = combinedTypeString(obj)
+        if (NON_FEED_TARGET_REGEX.containsMatchIn(typeStr)) return false
+        return optStringClean(obj, "message", "message_raw_output", "message_title").isNotBlank()
+    }
+
+    /**
+     * 按 coolapk-desktop `getNotificationFeedId` 优先级提取通知对应的真实动态 ID：
+     * 1. 通知正文/URL 里的 `/feed/{id}`（最可靠，绝不把通知记录 ID 或评论 ID 误当成动态 ID）；
+     * 2. 明确的 `feedId` / `feed_id` / `fid` 字段；
+     * 3. 明确标记为 feed 类型的对象（如 @我动态、点赞动态返回的 feed 实体）的 `targetId` / `entityId` / `id`；
+     * 4. `targetRow` 明确为动态正文时的 `id`。
+     */
+    private fun extractNotificationFeedId(root: JSONObject, candidates: List<JSONObject>): String {
+        for (candidate in candidates) {
+            for (key in arrayOf("note", "message", "infoHtml", "url", "targetUrl", "target_url", "webUrl", "web_url", "targetTitle")) {
+                val found = extractFeedIdFromUrl(optStringClean(candidate, key))
+                if (found.isNotEmpty()) return found
+            }
+        }
+        for (candidate in candidates) {
+            for (key in arrayOf("feedId", "feed_id", "fid")) {
+                val found = normalizeNumericFeedId(optStringClean(candidate, key))
+                if (found.isNotEmpty()) return found
+            }
+        }
+        for (candidate in candidates) {
+            if (!hasExplicitFeedType(candidate)) continue
+            for (key in arrayOf("targetId", "target_id", "entityId", "entity_id", "id")) {
+                val found = normalizeNumericFeedId(optStringClean(candidate, key))
+                if (found.isNotEmpty()) return found
+            }
+        }
+        val targetRow = root.optJSONObject("targetRow")
+        if (targetRow != null && isFeedLikeJson(targetRow)) {
+            val found = normalizeNumericFeedId(optStringClean(targetRow, "id", "entityId"))
+            if (found.isNotEmpty()) return found
+        }
+        return ""
+    }
+
+    private fun extractNotificationReplyId(candidates: List<JSONObject>): String {
+        for (candidate in candidates) {
+            for (key in arrayOf("url", "targetUrl", "target_url", "note", "message", "infoHtml")) {
+                val text = optStringClean(candidate, key).replace("&amp;", "&")
+                if (text.isBlank()) continue
+                val found = REPLY_URL_ID_REGEX.find(text)?.groupValues?.getOrNull(1)
+                    ?: REPLY_QUERY_ID_REGEX.find(text)?.groupValues?.getOrNull(1)
+                if (!found.isNullOrBlank() && found != "0") return found
+            }
+        }
+        for (candidate in candidates) {
+            val direct = normalizeNumericFeedId(optStringClean(candidate, "replyId", "reply_id"))
+            if (direct.isNotEmpty()) return direct
+            val typeStr = combinedTypeString(candidate)
+            if (REPLY_TYPE_REGEX.containsMatchIn(typeStr)) {
+                val targetReply = normalizeNumericFeedId(optStringClean(candidate, "targetId", "target_id"))
+                if (targetReply.isNotEmpty()) return targetReply
+            }
+            val entityType = optStringClean(candidate, "entityType", "entity_type").lowercase(Locale.ROOT)
+            if (REPLY_TYPE_REGEX.containsMatchIn(entityType)) {
+                val ownReply = normalizeNumericFeedId(optStringClean(candidate, "id", "entityId", "entity_id"))
+                if (ownReply.isNotEmpty()) return ownReply
+            }
+        }
+        return ""
+    }
+
+    private fun normalizeCoolapkAssetUrl(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return ""
+        return if (trimmed.startsWith("http", ignoreCase = true) || trimmed.startsWith("//")) {
+            TextSanitizer.normalizeImageUrl(trimmed)
+        } else {
+            "https://image.coolapk.com/${trimmed.trimStart('/')}"
+        }
+    }
+
+    private fun isTruthyFlag(obj: JSONObject, vararg keys: String): Boolean {
+        for (key in keys) {
+            if (!obj.has(key) || obj.isNull(key)) continue
+            val value = obj.opt(key)
+            when (value) {
+                is Boolean -> if (value) return true
+                is Number -> if (value.toInt() == 1) return true
+                is String -> {
+                    val v = value.trim().lowercase(Locale.ROOT)
+                    if (v == "1" || v == "true") return true
+                }
+            }
+        }
+        return false
     }
 
     internal fun optStringClean(obj: JSONObject, vararg keys: String): String {

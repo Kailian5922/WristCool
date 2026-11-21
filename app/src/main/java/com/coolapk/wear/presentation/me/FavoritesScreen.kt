@@ -3,6 +3,7 @@ package com.coolapk.wear.presentation.me
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,11 +44,11 @@ import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 
 @Composable
@@ -75,6 +76,7 @@ fun FavoritesScreen(
         onLoadMore = { viewModel.loadMore() }
     )
 
+    Box(modifier = Modifier.fillMaxSize()) {
     HorologistScaffold(
         scrollState = listState,
         edgeButton = {
@@ -189,10 +191,6 @@ fun FavoritesScreen(
                 }
             }
 
-            if (uiState.isLoading && uiState.items.isEmpty()) {
-                item(key = "fav_loading") { WearLoadingPlaceholder() }
-            }
-
             if (uiState.error != null && uiState.items.isEmpty()) {
                 item(key = "fav_error") {
                     WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
@@ -258,5 +256,8 @@ fun FavoritesScreen(
                 }
             }
         }
+    }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && uiState.items.isEmpty())
     }
 }

@@ -37,8 +37,8 @@ android {
         applicationId = "com.coolapk.wear.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.0.0-pre.2"
+        versionCode = 5
+        versionName = "2.0.0-pre.3"
     }
 
     compileOptions {

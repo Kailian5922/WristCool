@@ -166,6 +166,7 @@ data class NotificationItem(
     val message: String = "",
     val targetTitle: String = "",
     val feedId: String = "",
+    val replyId: String = "",
     val dateline: Long = 0L,
     val dateString: String = "",
     val isNew: Boolean = false
@@ -206,7 +207,8 @@ data class CollectionItem(
     val cover: String = "",
     val itemNum: Int = 0,
     val followNum: Int = 0,
-    val isOpen: Boolean = true
+    val isOpen: Boolean = true,
+    val isDefault: Boolean = false
 )
 
 data class ProductSpecItem(

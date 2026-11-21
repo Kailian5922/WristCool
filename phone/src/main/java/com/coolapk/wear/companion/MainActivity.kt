@@ -61,7 +61,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.util.UUID
 
 val CoolapkGreen = Color(0xFF0DAE62)
 
@@ -88,13 +87,11 @@ fun CompanionHomeScreen() {
     val prefs = remember { context.getSharedPreferences("coolapk_companion", Context.MODE_PRIVATE) }
 
     var cookie by remember { mutableStateOf(prefs.getString("cookie", "").orEmpty()) }
+    // 不自动生成伪造 UUID 作为 ddid，避免酷安服务端在点赞等写接口触发风控拦截
     val ddid = remember {
-        var id = prefs.getString("ddid", "").orEmpty()
-        if (id.isEmpty()) {
-            id = UUID.randomUUID().toString()
-            prefs.edit().putString("ddid", id).apply()
-        }
-        id
+        prefs.getString("ddid", "").orEmpty().takeUnless {
+            Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$").matches(it)
+        }.orEmpty()
     }
 
     val isLoggedIn = remember(cookie) { CookieHelper.isLoggedIn(cookie) }

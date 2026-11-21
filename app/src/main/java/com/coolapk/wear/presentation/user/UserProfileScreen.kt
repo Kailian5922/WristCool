@@ -101,7 +101,7 @@ fun UserProfileScreen(
     if (uiState.isLoadingProfile && uiState.userProfile == null) {
         HorologistScaffold(showTimeText = false) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                ExpressiveLoadingIndicator(size = 40.dp, contained = true)
+                ExpressiveLoadingIndicator(size = 40.dp, contained = false)
             }
         }
         return

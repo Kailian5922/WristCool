@@ -44,11 +44,11 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 
 @Composable
@@ -85,6 +85,7 @@ fun TopicScreen(
 
     val isFollowed = uiState.topicDetail?.isFollow == true
 
+    Box(modifier = Modifier.fillMaxSize()) {
     HorologistScaffold(
         scrollState = listState,
         edgeButton = {
@@ -186,10 +187,6 @@ fun TopicScreen(
                 }
             }
 
-            if (uiState.isLoading && uiState.items.isEmpty()) {
-                item(key = "topic_loading") { WearLoadingPlaceholder() }
-            }
-
             if (uiState.error != null && uiState.items.isEmpty()) {
                 item(key = "topic_error") {
                     WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.refresh() })
@@ -227,5 +224,8 @@ fun TopicScreen(
                 }
             }
         }
+    }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading && uiState.items.isEmpty())
     }
 }

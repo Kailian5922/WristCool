@@ -68,11 +68,42 @@ class CoolapkApi(
             "HyperOS", "OriginOS", "iOS", "手表", "玩机技巧", "摄影", "酷安", "折叠屏", "澎湃", "WearOS"
         )
 
+        private val DDI_EVENT_PATHS = setOf(
+            "/v6/feed/createFeed",
+            "/v6/feed/reply",
+            "/v6/feed/like",
+            "/v6/feed/likeReply"
+        )
+
+        private val FAKE_UUID_REGEX = Regex(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        )
+
         fun defaultOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .build()
+
+        internal fun cookieWithoutDdid(rawCookie: String): String {
+            if (rawCookie.isBlank()) return ""
+            return rawCookie.split(";")
+                .map { it.trim() }
+                .filter { part ->
+                    if (part.isEmpty()) return@filter false
+                    val key = part.substringBefore('=', part).trim()
+                    !key.equals("ddid", ignoreCase = true)
+                }
+                .joinToString("; ")
+        }
+
+        internal fun isUsableShuzilmDdid(rawDdid: String): Boolean {
+            val trimmed = rawDdid.trim()
+            if (trimmed.isEmpty() || trimmed.length > 512) return false
+            if (trimmed.any { it.isISOControl() }) return false
+            // 伴侣端旧版曾自动生成随机 UUID 作为占位 ddid，会导致酷安点赞接口触发风控报错，必须过滤
+            return !FAKE_UUID_REGEX.matches(trimmed)
+        }
     }
 
     private val auth by lazy { CoolapkAuth(deviceCodeProvider()) }
@@ -88,6 +119,8 @@ class CoolapkApi(
 
     @Volatile
     private var preferredSecondHandIndex: Int = 0
+
+    private val preferredCollectionEndpoint = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     val currentUid: String
         get() = credentialsProvider().uid
@@ -123,11 +156,18 @@ class CoolapkApi(
             .header("X-Dark-Mode", "1")
 
         if (credentials.isLoggedIn) {
-            var cookie = credentials.cookie
-            if (credentials.ddid.isNotBlank() && !cookie.contains("ddid=", ignoreCase = true)) {
-                cookie = "$cookie; ddid=${credentials.ddid}"
+            val cleanPath = path.substringBefore('?')
+            val needsDdid = DDI_EVENT_PATHS.any { cleanPath == it }
+            var cookie = cookieWithoutDdid(credentials.cookie)
+            val usableDdid = credentials.ddid.takeIf { isUsableShuzilmDdid(it) }
+                ?: com.coolapk.wear.data.util.CookieParser.extractValue(credentials.cookie, "ddid")
+                    .takeIf { isUsableShuzilmDdid(it) }
+            if (needsDdid && !usableDdid.isNullOrBlank()) {
+                cookie = if (cookie.isBlank()) "ddid=$usableDdid" else "$cookie; ddid=$usableDdid"
             }
-            builder.header("Cookie", cookie)
+            if (cookie.isNotBlank()) {
+                builder.header("Cookie", cookie)
+            }
         }
 
         return builder
@@ -310,9 +350,11 @@ class CoolapkApi(
 
     suspend fun getDigitalFeeds(page: Int): Result<List<FeedItem>> {
         val endpoints = listOf(
-            "/v6/page/dataList" to mapOf("url" to "V11_FIND_PRODUCT", "title" to "数码", "page" to page.toString()),
-            "/v6/page/dataList" to mapOf("url" to "#/feed/productFeedList", "title" to "数码", "page" to page.toString()),
-            "/v6/page/dataList" to mapOf("url" to "V9_HOME_TAB_DIGITAL", "title" to "数码", "page" to page.toString())
+            "/v6/page/dataList" to mapOf("url" to "V10_DIGITAL_HOME", "title" to "数码", "page" to page.toString()),
+            "/v6/page/dataList" to mapOf("url" to "V10_CHANNEL_SJB", "title" to "手机", "page" to page.toString()),
+            "/v6/page/dataList" to mapOf("url" to "V8_ZHUANTI_COMPUTER_20230413", "title" to "电脑", "page" to page.toString()),
+            "/v6/page/dataList" to mapOf("url" to "V13_PINGFEN", "title" to "评分", "page" to page.toString()),
+            "/v6/topic/tagFeedList" to mapOf("tag" to "数码", "page" to page.toString())
         )
         return executeFeedFallbackEndpoints(
             endpoints = endpoints,
@@ -324,9 +366,11 @@ class CoolapkApi(
 
     suspend fun getSecondHandFeeds(page: Int): Result<List<FeedItem>> {
         val endpoints = listOf(
-            "/v6/page/dataList" to mapOf("url" to "V11_FIND_ERSHOU", "title" to "二手", "page" to page.toString()),
-            "/v6/page/dataList" to mapOf("url" to "#/feed/erShouList", "title" to "二手", "page" to page.toString()),
-            "/v6/page/dataList" to mapOf("url" to "/feed/erShouList", "title" to "二手", "page" to page.toString())
+            "/v6/page/dataList" to mapOf("url" to "#/feed/ershouList?dataListType=staggered", "title" to "闲置交易", "page" to page.toString()),
+            "/v6/page/dataList" to mapOf("url" to "V11_DISCOVERY_SECOND_HAND", "title" to "二手", "page" to page.toString()),
+            "/v6/page/dataList" to mapOf("url" to "/page?url=V11_FIND_GOOD_GOODS_HOME", "title" to "酷品二手", "page" to page.toString()),
+            "/v6/page/dataList" to mapOf("url" to "#/feed/ershouList", "title" to "二手", "page" to page.toString()),
+            "/v6/topic/tagFeedList" to mapOf("tag" to "酷安二手", "page" to page.toString())
         )
         return executeFeedFallbackEndpoints(
             endpoints = endpoints,
@@ -394,6 +438,21 @@ class CoolapkApi(
         }
     }
 
+    /**
+     * 通过评论 ID 反查所属原动态 ID（对应 `/v6/feed/replyDetail?id={replyId}`）。
+     * 用于消息中心点击「评论@我 / 点赞评论」类通知时精确跳转到原帖。
+     */
+    suspend fun resolveFeedIdFromReply(replyId: String): Result<String> {
+        val cleanId = replyId.trim()
+        if (cleanId.isEmpty()) return Result.failure(IOException("评论 ID 为空"))
+        return executeGet("/v6/feed/replyDetail", mapOf("id" to cleanId)).mapCatching { body ->
+            CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
+            val feedId = CoolapkJsonParser.parseReplyFeedId(body)
+            if (feedId.isBlank()) throw IOException("未找到原动态")
+            feedId
+        }
+    }
+
     suspend fun getFeedReplies(
         feedId: String,
         page: Int,
@@ -431,9 +490,17 @@ class CoolapkApi(
         }
     }
 
+    /**
+     * 点赞/取消点赞动态（严格对齐官方 APK `kb1.java` 与 coolapk-desktop）：
+     * `id` 与 `detail=0` 放查询参数，表单携带 `trace=`。
+     */
     suspend fun toggleLike(feedId: String, like: Boolean): Result<Boolean> {
         val path = if (like) "/v6/feed/like" else "/v6/feed/unlike"
-        return executePost(path, mapOf("id" to feedId, "detail" to "0")).map { true }
+        return executePost(
+            path = path,
+            formParams = mapOf("trace" to ""),
+            queryParams = mapOf("id" to feedId, "detail" to "0")
+        ).map { true }
     }
 
     /**
@@ -450,17 +517,30 @@ class CoolapkApi(
 
     suspend fun toggleFavorite(feedId: String, favorite: Boolean): Result<Boolean> {
         return if (favorite) {
-            executePost("/v6/feed/favorite", mapOf("id" to feedId, "targetType" to "feed")).map { true }
+            val primary = executeGet("/v6/feed/favorite", mapOf("id" to feedId)).mapCatching { body ->
+                CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
+                true
+            }
+            if (primary.isSuccess) primary
+            else executePost("/v6/feed/favorite", mapOf("id" to feedId, "targetType" to "feed")).map { true }
         } else {
             unFavoriteFeed(feedId)
         }
     }
 
     suspend fun unFavoriteFeed(feedId: String): Result<Boolean> {
-        val params = mapOf("id" to feedId, "targetType" to "feed")
-        val primary = executePost("/v6/feed/unFavorite", params)
+        val primary = executeGet("/v6/feed/unFavorite", mapOf("id" to feedId)).mapCatching { body ->
+            CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
+            true
+        }
         if (primary.isSuccess) return Result.success(true)
-        return executePost("/v6/feed/unfavorite", params).map { true }
+        val fallbackGet = executeGet("/v6/feed/unfavorite", mapOf("id" to feedId)).mapCatching { body ->
+            CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
+            true
+        }
+        if (fallbackGet.isSuccess) return Result.success(true)
+        val params = mapOf("id" to feedId, "targetType" to "feed")
+        return executePost("/v6/feed/unFavorite", params).map { true }
     }
 
     /**
@@ -685,11 +765,35 @@ class CoolapkApi(
         }
     }
 
-    suspend fun getCollectionItems(collectionId: String, page: Int): Result<List<FeedItem>> {
-        return executeGet(
-            "/v6/collection/itemlist",
-            mapOf("id" to collectionId, "page" to page.toString(), "listType" to "allFeedType")
-        ).mapCatching { body -> parseAndCacheFeeds(body).getOrThrow() }
+    suspend fun getCollectionItems(
+        collectionId: String,
+        page: Int,
+        isDefault: Boolean = false
+    ): Result<List<FeedItem>> {
+        val cleanId = collectionId.trim()
+        if (cleanId.isEmpty() || cleanId == "0" || cleanId.equals("default", ignoreCase = true)) {
+            return getMyFavoriteFeeds(page)
+        }
+        val endpoints = buildList {
+            add("/v6/collection/itemList" to mapOf("id" to cleanId, "page" to page.toString()))
+            add(
+                "/v6/collection/itemlist" to mapOf(
+                    "id" to cleanId,
+                    "page" to page.toString(),
+                    "listType" to "allFeedType"
+                )
+            )
+            if (isDefault) {
+                add("/v6/favorite/list" to mapOf("type" to "feed", "page" to page.toString()))
+            }
+        }
+        val pref = preferredCollectionEndpoint[cleanId] ?: 0
+        return executeFeedFallbackEndpoints(
+            endpoints = endpoints,
+            page = page,
+            preferredIndex = pref,
+            onPreferredIndexUpdated = { preferredCollectionEndpoint[cleanId] = it }
+        )
     }
 
     suspend fun getUserLikes(uid: String, page: Int): Result<List<FeedItem>> {
@@ -709,7 +813,12 @@ class CoolapkApi(
 
     suspend fun getCloudHitHistory(page: Int): Result<List<FeedItem>> {
         return executeGet("/v6/user/hitHistoryList", mapOf("type" to "feed", "page" to page.toString()))
-            .mapCatching { body -> parseAndCacheFeeds(body).getOrThrow() }
+            .mapCatching { body ->
+                CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
+                val list = CoolapkJsonParser.parseCloudHistoryList(body)
+                FeedMemoryCache.putAll(list)
+                list
+            }
     }
 
     // ==================== 搜索（动态/作者/话题/数码/应用 + 实时联想） ====================
@@ -808,7 +917,7 @@ class CoolapkApi(
 
     suspend fun toggleFollowUser(uid: String, follow: Boolean): Result<Boolean> {
         val path = if (follow) "/v6/user/follow" else "/v6/user/unfollow"
-        return executePost(path, mapOf("uid" to uid)).map { true }
+        return executePost(path = path, queryParams = mapOf("uid" to uid)).map { true }
     }
 
     suspend fun setSpecialFollowUser(uid: String, special: Boolean): Result<Boolean> {

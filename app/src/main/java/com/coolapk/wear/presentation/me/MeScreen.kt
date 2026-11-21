@@ -26,7 +26,6 @@ import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Settings
@@ -73,7 +72,7 @@ import com.coolapk.wear.presentation.components.rotaryEventHandler
 fun MeScreen(
     viewModel: MeViewModel,
     isActivePage: Boolean = true,
-    onFavoritesClick: () -> Unit,
+    onFavoritesClick: () -> Unit = {},
     onCollectionsClick: (uid: String) -> Unit = {},
     onMyLikesClick: (uid: String) -> Unit = {},
     onMyRepliesClick: (uid: String) -> Unit = {},
@@ -304,24 +303,12 @@ fun MeScreen(
                 }
 
                 if (uiState.credentials.isLoggedIn) {
-                    item(key = "me_favorites") {
-                        FilledTonalButton(
-                            onClick = onFavoritesClick,
-                            icon = { Icon(Icons.Rounded.Bookmark, contentDescription = null, tint = colorScheme.tertiary, modifier = Modifier.size(16.dp)) },
-                            label = { Text("我的收藏", maxLines = 1) },
-                            transformation = SurfaceTransformation(transformationSpec),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .transformedHeight(this, transformationSpec)
-                                .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
-                        )
-                    }
-
                     item(key = "me_collections") {
                         FilledTonalButton(
                             onClick = { onCollectionsClick(effectiveUid) },
-                            icon = { Icon(Icons.Rounded.FolderSpecial, contentDescription = null, tint = colorScheme.primary, modifier = Modifier.size(16.dp)) },
-                            label = { Text("云端收藏单", maxLines = 1) },
+                            icon = { Icon(Icons.Rounded.Bookmark, contentDescription = null, tint = colorScheme.tertiary, modifier = Modifier.size(16.dp)) },
+                            label = { Text("我的收藏", maxLines = 1) },
+                            secondaryLabel = { Text("默认收藏夹与全部分类", maxLines = 1) },
                             transformation = SurfaceTransformation(transformationSpec),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -362,7 +349,7 @@ fun MeScreen(
                         onClick = onHistoryClick,
                         icon = { Icon(Icons.Rounded.History, contentDescription = null, tint = colorScheme.tertiary, modifier = Modifier.size(16.dp)) },
                         label = { Text("浏览历史", maxLines = 1) },
-                        secondaryLabel = { Text("本地 ${uiState.historyCount} 条 · 支持云端足迹", maxLines = 1) },
+                        secondaryLabel = { Text("云端优先 · 本地 ${uiState.historyCount} 条", maxLines = 1) },
                         transformation = SurfaceTransformation(transformationSpec),
                         modifier = Modifier
                             .fillMaxWidth()

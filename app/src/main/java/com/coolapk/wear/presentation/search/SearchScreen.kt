@@ -76,10 +76,10 @@ import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.UserRowCard
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.WearSectionSubHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
 import com.coolapk.wear.presentation.detail.QrCodeOverlay
@@ -373,10 +373,6 @@ fun SearchScreen(
                     }
                 }
 
-                if (uiState.isLoading) {
-                    item(key = "search_loading") { WearLoadingPlaceholder() }
-                }
-
                 if (uiState.error != null && !uiState.isLoading) {
                     item(key = "search_error") {
                         WearErrorRetry(message = uiState.error.orEmpty(), onRetry = { viewModel.search() })
@@ -625,6 +621,8 @@ fun SearchScreen(
                 }
             }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoading)
 
         qrAppUrl?.let { (title, url) ->
             QrCodeOverlay(

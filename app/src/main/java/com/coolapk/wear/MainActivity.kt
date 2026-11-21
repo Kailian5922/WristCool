@@ -16,12 +16,12 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.foundation.pager.HorizontalPager
+import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.AnimatedPage
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.HorizontalPagerScaffold
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.PagerScaffoldDefaults
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
@@ -213,7 +213,15 @@ fun CoolapkWearApp(container: AppContainer) {
                 HorizontalPagerScaffold(pagerState = pagerState) {
                     HorizontalPager(
                         state = pagerState,
-                        flingBehavior = PagerScaffoldDefaults.snapWithSpringFlingBehavior(state = pagerState)
+                        beyondViewportPageCount = 1,
+                        rotaryScrollableBehavior = null,
+                        flingBehavior = PagerDefaults.snapFlingBehavior(
+                            state = pagerState,
+                            maxFlingPages = 0,
+                            snapAnimationSpec = PagerDefaults.SnapAnimationSpec,
+                            snapPositionalThreshold = 0.5f
+                        ),
+                        key = { it }
                     ) { page ->
                         AnimatedPage(pageIndex = page, pagerState = pagerState) {
                             val isActive = pagerState.currentPage == page
@@ -395,20 +403,25 @@ fun CoolapkWearApp(container: AppContainer) {
                 }
                 CollectionsScreen(
                     viewModel = collectionsVm,
-                    onCollectionClick = { id, title ->
-                        navController.navigate("collectionDetail/${Uri.encode(id)}/${Uri.encode(title.ifBlank { "收藏单" })}")
+                    onCollectionClick = { id, title, isDefault ->
+                        val defaultFlag = if (isDefault) "1" else "0"
+                        navController.navigate(
+                            "collectionDetail/${Uri.encode(id)}/${Uri.encode(title.ifBlank { "我的收藏" })}/$defaultFlag"
+                        )
                     },
                     onBack = { navController.popBackStack() }
                 )
             }
 
-            composable("collectionDetail/{collectionId}/{title}") { backStackEntry ->
+            composable("collectionDetail/{collectionId}/{title}/{isDefault}") { backStackEntry ->
                 val collectionId = backStackEntry.arguments?.getString("collectionId").orEmpty()
                 val title = backStackEntry.arguments?.getString("title").orEmpty()
-                val detailVm: CollectionDetailViewModel = viewModel(key = "col_detail_$collectionId") {
+                val isDefault = backStackEntry.arguments?.getString("isDefault") == "1"
+                val detailVm: CollectionDetailViewModel = viewModel(key = "col_detail_${collectionId}_$isDefault") {
                     CollectionDetailViewModel(
                         api = container.api,
                         collectionId = collectionId,
+                        isDefault = isDefault,
                         feedUpdateBus = container.feedUpdateBus
                     )
                 }
@@ -450,6 +463,7 @@ fun CoolapkWearApp(container: AppContainer) {
             composable("history") {
                 HistoryScreen(
                     browsingHistoryRepository = container.browsingHistoryRepository,
+                    authRepository = container.authRepository,
                     api = container.api,
                     onFeedClick = ::navigateToFeed,
                     onUserClick = ::navigateToUser,

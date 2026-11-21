@@ -3,6 +3,7 @@ package com.coolapk.wear.presentation.product
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -45,11 +46,11 @@ import coil.compose.AsyncImage
 import com.coolapk.wear.presentation.components.FeedCard
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.WearPillBadge
 import com.coolapk.wear.presentation.components.WearSectionSubHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
@@ -84,6 +85,7 @@ fun ProductScreen(
         onLoadMore = { viewModel.loadFeeds(refresh = false) }
     )
 
+    Box(modifier = Modifier.fillMaxSize()) {
     HorologistScaffold(
         scrollState = listState,
         edgeButton = {
@@ -115,10 +117,6 @@ fun ProductScreen(
                 .fillMaxSize()
                 .rotaryEventHandler(listState)
         ) {
-            if (uiState.isLoadingDetail && uiState.product == null) {
-                item(key = "product_loading") { WearLoadingPlaceholder() }
-            }
-
             if (uiState.error != null && uiState.product == null) {
                 item(key = "product_error") {
                     WearErrorRetry(
@@ -320,5 +318,8 @@ fun ProductScreen(
                 }
             }
         }
+    }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoadingDetail && uiState.product == null)
     }
 }

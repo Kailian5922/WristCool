@@ -53,11 +53,11 @@ import com.coolapk.wear.data.model.NotificationItem
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.UserAvatar
+import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
 import com.coolapk.wear.presentation.components.WearLoadMoreFooter
-import com.coolapk.wear.presentation.components.WearLoadingPlaceholder
 import com.coolapk.wear.presentation.components.WearPillBadge
 import com.coolapk.wear.presentation.components.WearScreenHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
@@ -96,192 +96,199 @@ fun InboxScreen(
         onLoadMore = { viewModel.loadMore() }
     )
 
-    HorologistScaffold(
-        scrollState = listState,
-        edgeButton = {
-            if (uiState.isLoggedIn) {
-                val showClear = uiState.currentTab != InboxTab.MESSAGES
-                WearEdgeActionButton(
-                    scrollState = listState,
-                    buttonSize = EdgeButtonSize.ExtraSmall,
-                    onClick = {
-                        if (showClear) viewModel.clearCurrentTabUnread() else viewModel.refresh()
-                    }
-                ) {
-                    Icon(
-                        imageVector = if (showClear) Icons.Rounded.DoneAll else Icons.Rounded.Refresh,
-                        contentDescription = if (showClear) "清除未读" else "刷新",
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (showClear) "标已读" else "刷新",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-            }
-        }
-    ) { contentPadding ->
-        TransformingLazyColumn(
-            state = listState,
-            contentPadding = contentPadding,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryEventHandler(listState, enabled = isActivePage)
-        ) {
-            item(key = "inbox_header") {
-                val subtitle = if (uiState.counts.totalUnread > 0) "未读 ${uiState.counts.totalUnread} 条" else null
-                WearScreenHeader(
-                    title = "消息中心",
-                    subtitle = subtitle,
-                    transformationSpec = transformationSpec
-                )
-            }
-
-            if (!uiState.isLoggedIn) {
-                item(key = "inbox_need_login") {
-                    WearEmptyState(
-                        text = "登录后即可在手表端\n查看通知提醒与回复私信",
-                        icon = Icons.Rounded.MailOutline,
-                        actionLabel = "前往导入登录",
-                        onAction = onGoLogin
-                    )
-                }
-                return@TransformingLazyColumn
-            }
-
-            // 6 分类切换条（私信 / 评论 / @我 / 评论@ / 赞我 / 新粉丝）
-            item(key = "inbox_tabs") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(tabScroll)
-                        .padding(vertical = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    InboxTab.entries.forEach { tab ->
-                        val isSelected = uiState.currentTab == tab
-                        val count = when (tab) {
-                            InboxTab.MESSAGES -> uiState.counts.message
-                            InboxTab.COMMENT -> uiState.counts.comment
-                            InboxTab.AT_ME -> uiState.counts.atMe
-                            InboxTab.AT_COMMENT -> uiState.counts.atCommentMe
-                            InboxTab.LIKES -> uiState.counts.feedLike
-                            InboxTab.FOLLOW -> uiState.counts.follow
+    Box(modifier = Modifier.fillMaxSize()) {
+        HorologistScaffold(
+            scrollState = listState,
+            edgeButton = {
+                if (uiState.isLoggedIn) {
+                    val showClear = uiState.currentTab != InboxTab.MESSAGES
+                    WearEdgeActionButton(
+                        scrollState = listState,
+                        buttonSize = EdgeButtonSize.ExtraSmall,
+                        onClick = {
+                            if (showClear) viewModel.clearCurrentTabUnread() else viewModel.refresh()
                         }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(
-                                    if (isSelected) colorScheme.primary else colorScheme.surfaceContainerHigh
+                    ) {
+                        Icon(
+                            imageVector = if (showClear) Icons.Rounded.DoneAll else Icons.Rounded.Refresh,
+                            contentDescription = if (showClear) "清除未读" else "刷新",
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (showClear) "标已读" else "刷新",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+        ) { contentPadding ->
+            TransformingLazyColumn(
+                state = listState,
+                contentPadding = contentPadding,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .rotaryEventHandler(listState, enabled = isActivePage)
+            ) {
+                item(key = "inbox_header") {
+                    val subtitle = if (uiState.counts.totalUnread > 0) "未读 ${uiState.counts.totalUnread} 条" else null
+                    WearScreenHeader(
+                        title = "消息中心",
+                        subtitle = subtitle,
+                        transformationSpec = transformationSpec
+                    )
+                }
+
+                if (!uiState.isLoggedIn) {
+                    item(key = "inbox_need_login") {
+                        WearEmptyState(
+                            text = "登录后即可在手表端\n查看通知提醒与回复私信",
+                            icon = Icons.Rounded.MailOutline,
+                            actionLabel = "前往导入登录",
+                            onAction = onGoLogin
+                        )
+                    }
+                    return@TransformingLazyColumn
+                }
+
+                // 6 分类切换条（私信 / 评论 / @我 / 评论@ / 赞我 / 新粉丝）
+                item(key = "inbox_tabs") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(tabScroll)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        InboxTab.entries.forEach { tab ->
+                            val isSelected = uiState.currentTab == tab
+                            val count = when (tab) {
+                                InboxTab.MESSAGES -> uiState.counts.message
+                                InboxTab.COMMENT -> uiState.counts.comment
+                                InboxTab.AT_ME -> uiState.counts.atMe
+                                InboxTab.AT_COMMENT -> uiState.counts.atCommentMe
+                                InboxTab.LIKES -> uiState.counts.feedLike
+                                InboxTab.FOLLOW -> uiState.counts.follow
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isSelected) colorScheme.primary else colorScheme.surfaceContainerHigh
+                                    )
+                                    .clickable { viewModel.switchTab(tab) }
+                                    .padding(horizontal = 9.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    text = if (count > 0) "${tab.label} $count" else tab.label,
+                                    color = if (isSelected) colorScheme.onPrimary else colorScheme.onSurface,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                 )
-                                .clickable { viewModel.switchTab(tab) }
-                                .padding(horizontal = 9.dp, vertical = 5.dp)
+                            }
+                        }
+                    }
+                }
+
+                if (uiState.error != null && itemCount == 0) {
+                    item(key = "inbox_error") {
+                        WearErrorRetry(
+                            message = uiState.error.orEmpty(),
+                            onRetry = { viewModel.refresh() }
+                        )
+                    }
+                }
+
+                if (itemCount == 0 && !uiState.isLoading && uiState.error == null) {
+                    item(key = "inbox_empty") {
+                        WearEmptyState(
+                            text = if (uiState.currentTab == InboxTab.MESSAGES) "暂无私信会话" else "暂无新通知",
+                            icon = if (uiState.currentTab == InboxTab.MESSAGES) Icons.Rounded.MailOutline else Icons.Rounded.NotificationsNone
+                        )
+                    }
+                }
+
+                if (uiState.currentTab == InboxTab.MESSAGES) {
+                    itemsIndexed(uiState.sessions, key = { idx, s -> "sess_${s.ukey}_$idx" }) { _, session ->
+                        val revealState = rememberRevealState()
+                        SwipeToReveal(
+                            revealState = revealState,
+                            onSwipePrimaryAction = { viewModel.deleteSession(session) },
+                            primaryAction = {
+                                PrimaryActionButton(
+                                    onClick = { viewModel.deleteSession(session) },
+                                    icon = { Icon(Icons.Rounded.Delete, contentDescription = "删除会话") },
+                                    text = { Text("删除") }
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
                         ) {
-                            Text(
-                                text = if (count > 0) "${tab.label} $count" else tab.label,
-                                color = if (isSelected) colorScheme.onPrimary else colorScheme.onSurface,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            SessionCard(
+                                session = session,
+                                transformation = SurfaceTransformation(transformationSpec),
+                                onClick = {
+                                    onOpenChat(session.ukey, session.partnerUid, session.partnerUsername)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    itemsIndexed(uiState.notifications, key = { idx, n -> "notif_${n.id}_$idx" }) { _, item ->
+                        val revealState = rememberRevealState()
+                        SwipeToReveal(
+                            revealState = revealState,
+                            onSwipePrimaryAction = { viewModel.deleteNotification(item) },
+                            primaryAction = {
+                                PrimaryActionButton(
+                                    onClick = { viewModel.deleteNotification(item) },
+                                    icon = { Icon(Icons.Rounded.Delete, contentDescription = "删除通知") },
+                                    text = { Text("删除") }
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
+                        ) {
+                            NotificationCard(
+                                item = item,
+                                transformation = SurfaceTransformation(transformationSpec),
+                                onClick = {
+                                    when {
+                                        item.feedId.isNotBlank() -> onFeedClick(item.feedId)
+                                        item.replyId.isNotBlank() -> viewModel.resolveNotificationFeed(item) { resolvedId ->
+                                            if (!resolvedId.isNullOrBlank()) {
+                                                onFeedClick(resolvedId)
+                                            } else if (item.fromUid.isNotBlank()) {
+                                                onUserClick(item.fromUid)
+                                            }
+                                        }
+                                        item.fromUid.isNotBlank() -> onUserClick(item.fromUid)
+                                    }
+                                }
                             )
                         }
                     }
                 }
-            }
 
-            if (uiState.isLoading && itemCount == 0) {
-                item(key = "inbox_loading") { WearLoadingPlaceholder() }
-            }
-
-            if (uiState.error != null && itemCount == 0) {
-                item(key = "inbox_error") {
-                    WearErrorRetry(
-                        message = uiState.error.orEmpty(),
-                        onRetry = { viewModel.refresh() }
-                    )
-                }
-            }
-
-            if (itemCount == 0 && !uiState.isLoading && uiState.error == null) {
-                item(key = "inbox_empty") {
-                    WearEmptyState(
-                        text = if (uiState.currentTab == InboxTab.MESSAGES) "暂无私信会话" else "暂无新通知",
-                        icon = if (uiState.currentTab == InboxTab.MESSAGES) Icons.Rounded.MailOutline else Icons.Rounded.NotificationsNone
-                    )
-                }
-            }
-
-            if (uiState.currentTab == InboxTab.MESSAGES) {
-                itemsIndexed(uiState.sessions, key = { idx, s -> "sess_${s.ukey}_$idx" }) { _, session ->
-                    val revealState = rememberRevealState()
-                    SwipeToReveal(
-                        revealState = revealState,
-                        onSwipePrimaryAction = { viewModel.deleteSession(session) },
-                        primaryAction = {
-                            PrimaryActionButton(
-                                onClick = { viewModel.deleteSession(session) },
-                                icon = { Icon(Icons.Rounded.Delete, contentDescription = "删除会话") },
-                                text = { Text("删除") }
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, transformationSpec)
-                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                    ) {
-                        SessionCard(
-                            session = session,
-                            transformation = SurfaceTransformation(transformationSpec),
-                            onClick = {
-                                onOpenChat(session.ukey, session.partnerUid, session.partnerUsername)
-                            }
+                if (uiState.isLoadingMore || (!uiState.hasMore && itemCount > 0)) {
+                    item(key = "inbox_footer") {
+                        WearLoadMoreFooter(
+                            isLoadingMore = uiState.isLoadingMore,
+                            hasMore = uiState.hasMore,
+                            hasItems = itemCount > 0
                         )
                     }
-                }
-            } else {
-                itemsIndexed(uiState.notifications, key = { idx, n -> "notif_${n.id}_$idx" }) { _, item ->
-                    val revealState = rememberRevealState()
-                    SwipeToReveal(
-                        revealState = revealState,
-                        onSwipePrimaryAction = { viewModel.deleteNotification(item) },
-                        primaryAction = {
-                            PrimaryActionButton(
-                                onClick = { viewModel.deleteNotification(item) },
-                                icon = { Icon(Icons.Rounded.Delete, contentDescription = "删除通知") },
-                                text = { Text("删除") }
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, transformationSpec)
-                            .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                    ) {
-                        NotificationCard(
-                            item = item,
-                            transformation = SurfaceTransformation(transformationSpec),
-                            onClick = {
-                                when {
-                                    item.feedId.isNotBlank() -> onFeedClick(item.feedId)
-                                    item.fromUid.isNotBlank() -> onUserClick(item.fromUid)
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            if (uiState.isLoadingMore || (!uiState.hasMore && itemCount > 0)) {
-                item(key = "inbox_footer") {
-                    WearLoadMoreFooter(
-                        isLoadingMore = uiState.isLoadingMore,
-                        hasMore = uiState.hasMore,
-                        hasItems = itemCount > 0
-                    )
                 }
             }
         }
+
+        WearCenteredLoadingOverlay(visible = uiState.isLoggedIn && uiState.isLoading && itemCount == 0)
     }
 }
 
