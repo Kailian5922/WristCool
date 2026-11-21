@@ -13,8 +13,6 @@ import com.coolapk.wear.data.repository.FeedUpdateBus
 import com.coolapk.wear.data.repository.SettingsRepository
 import com.coolapk.wear.presentation.components.SubReplyUiState
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -112,16 +110,14 @@ class FeedDetailViewModel(
     private fun applyCommentBlacklist(list: List<CommentItem>): List<CommentItem> =
         blacklistRepository?.filterComments(list) ?: list
 
-    fun loadDetail(
-        postToken: String? = null,
-        postTokenField: String? = null
-    ) {
+    fun loadDetail() {
         detailJob?.cancel()
         commentsJob?.cancel()
         detailJob = viewModelScope.launch {
+            val hasCachedFeed = _uiState.value.feed != null
             _uiState.update { state ->
                 state.copy(
-                    isLoading = state.feed == null,
+                    isLoading = !hasCachedFeed,
                     isLoadingComments = state.comments.isEmpty(),
                     error = null,
                     commentsError = null,
@@ -132,70 +128,104 @@ class FeedDetailViewModel(
             }
 
             val sortKey = _uiState.value.commentSort.key
-            val (detailResult, commentsResult) = coroutineScope {
-                val detailDeferred = async { api.getFeedDetail(feedId, postToken, postTokenField) }
-                val commentsDeferred = async {
-                    api.getFeedReplies(
-                        feedId = feedId,
-                        page = 1,
-                        sortType = sortKey,
-                        postToken = postToken,
-                        postTokenField = postTokenField
-                    )
-                }
-                detailDeferred.await() to commentsDeferred.await()
-            }
 
-            val rawComments = commentsResult.getOrDefault(emptyList()).distinctBy { it.id }
-            val commentFailure = commentsResult.exceptionOrNull()
-            val commentsCaptcha = (commentFailure as? CoolapkCaptchaRequiredException)?.challenge
-            val commentsError = commentFailure?.let { it.message?.ifBlank { "加载评论失败" } ?: "加载评论失败" }
+            if (hasCachedFeed) {
+                // 已有列表缓存正文时，优先顺序拉取评论区，避免与 /v6/feed/detail 同毫秒并发抢占连接或加重风控
+                val commentsResult = api.getFeedReplies(
+                    feedId = feedId,
+                    page = 1,
+                    sortType = sortKey
+                )
+                val commentFailure = commentsResult.exceptionOrNull()
+                val commentsCaptcha = (commentFailure as? CoolapkCaptchaRequiredException)?.challenge
+                val commentsError = commentFailure?.let { it.message?.ifBlank { "加载评论失败" } ?: "加载评论失败" }
+                val rawComments = commentsResult.getOrDefault(emptyList()).distinctBy { it.id }
 
-            detailResult.onSuccess { item ->
-                if (shouldRecordHistory()) {
-                    browsingHistoryRepository?.recordView(item)
-                }
-                feedUpdateBus?.publish(item)
                 _uiState.update { state ->
                     state.copy(
-                        feed = item,
                         rawComments = if (commentFailure == null) rawComments else state.rawComments,
                         comments = if (commentFailure == null) applyCommentBlacklist(rawComments) else state.comments,
                         commentPage = 1,
                         hasMoreComments = commentFailure == null && rawComments.size >= COMMENT_PAGE_MIN_FOR_MORE,
-                        isLiked = item.isLiked,
-                        likeCount = item.likeNum,
-                        isFavorite = item.isFavorite,
                         isLoading = false,
                         isLoadingComments = false,
-                        error = null,
-                        detailCaptcha = null,
                         commentsError = commentsError,
                         commentsCaptcha = commentsCaptcha
                     )
                 }
-            }.onFailure { err ->
-                val detailCaptcha = (err as? CoolapkCaptchaRequiredException)?.challenge
-                _uiState.update { state ->
-                    if (state.feed != null) {
+
+                // 若评论区已被酷安要求人机验证，不再紧接着补发 /v6/feed/detail 制造多余拦截请求
+                if (commentsCaptcha == null) {
+                    api.getFeedDetail(feedId).onSuccess { item ->
+                        if (shouldRecordHistory()) {
+                            browsingHistoryRepository?.recordView(item)
+                        }
+                        feedUpdateBus?.publish(item)
+                        _uiState.update { state ->
+                            state.copy(
+                                feed = item,
+                                isLiked = item.isLiked,
+                                likeCount = item.likeNum,
+                                isFavorite = item.isFavorite,
+                                error = null,
+                                detailCaptcha = null
+                            )
+                        }
+                    }.onFailure { err ->
+                        val detailCaptcha = (err as? CoolapkCaptchaRequiredException)?.challenge
+                        _uiState.update { state ->
+                            state.copy(detailCaptcha = detailCaptcha)
+                        }
+                    }
+                }
+            } else {
+                // 无缓存正文时（如消息通知直达），先拉取详情；详情失败时直接停手，不再空耗评论接口请求
+                val detailResult = api.getFeedDetail(feedId)
+                detailResult.onFailure { err ->
+                    val detailCaptcha = (err as? CoolapkCaptchaRequiredException)?.challenge
+                    _uiState.update { state ->
+                        state.copy(
+                            isLoading = false,
+                            isLoadingComments = false,
+                            error = err.message ?: "加载详情失败",
+                            detailCaptcha = detailCaptcha
+                        )
+                    }
+                }.onSuccess { item ->
+                    if (shouldRecordHistory()) {
+                        browsingHistoryRepository?.recordView(item)
+                    }
+                    feedUpdateBus?.publish(item)
+                    _uiState.update { state ->
+                        state.copy(
+                            feed = item,
+                            isLiked = item.isLiked,
+                            likeCount = item.likeNum,
+                            isFavorite = item.isFavorite,
+                            isLoading = false,
+                            isLoadingComments = true,
+                            error = null,
+                            detailCaptcha = null
+                        )
+                    }
+
+                    val commentsResult = api.getFeedReplies(
+                        feedId = feedId,
+                        page = 1,
+                        sortType = sortKey
+                    )
+                    val commentFailure = commentsResult.exceptionOrNull()
+                    val commentsCaptcha = (commentFailure as? CoolapkCaptchaRequiredException)?.challenge
+                    val commentsError = commentFailure?.let { it.message?.ifBlank { "加载评论失败" } ?: "加载评论失败" }
+                    val rawComments = commentsResult.getOrDefault(emptyList()).distinctBy { it.id }
+
+                    _uiState.update { state ->
                         state.copy(
                             rawComments = if (commentFailure == null) rawComments else state.rawComments,
                             comments = if (commentFailure == null) applyCommentBlacklist(rawComments) else state.comments,
                             commentPage = 1,
                             hasMoreComments = commentFailure == null && rawComments.size >= COMMENT_PAGE_MIN_FOR_MORE,
-                            isLoading = false,
                             isLoadingComments = false,
-                            error = null,
-                            detailCaptcha = detailCaptcha,
-                            commentsError = commentsError,
-                            commentsCaptcha = commentsCaptcha
-                        )
-                    } else {
-                        state.copy(
-                            isLoading = false,
-                            isLoadingComments = false,
-                            error = err.message ?: "加载详情失败",
-                            detailCaptcha = detailCaptcha,
                             commentsError = commentsError,
                             commentsCaptcha = commentsCaptcha
                         )
@@ -205,16 +235,11 @@ class FeedDetailViewModel(
         }
     }
 
-    fun retryComments(
-        postToken: String? = null,
-        postTokenField: String? = null
-    ) {
+    fun retryComments() {
         fetchComments(
             page = 1,
             sort = _uiState.value.commentSort,
-            replace = true,
-            postToken = postToken,
-            postTokenField = postTokenField
+            replace = true
         )
     }
 
@@ -249,9 +274,7 @@ class FeedDetailViewModel(
     private fun fetchComments(
         page: Int,
         sort: CommentSort,
-        replace: Boolean,
-        postToken: String? = null,
-        postTokenField: String? = null
+        replace: Boolean
     ) {
         if (replace) {
             commentsJob?.cancel()
@@ -278,9 +301,7 @@ class FeedDetailViewModel(
                 page = page,
                 sortType = sort.key,
                 firstItem = firstItem,
-                lastItem = lastItem,
-                postToken = postToken,
-                postTokenField = postTokenField
+                lastItem = lastItem
             )
             if (_uiState.value.commentSort != sort) return@launch
 

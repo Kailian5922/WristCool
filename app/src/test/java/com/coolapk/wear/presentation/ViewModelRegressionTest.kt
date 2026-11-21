@@ -371,9 +371,9 @@ class ViewModelRegressionTest {
                     )
                     path.startsWith("/v6/feed/replyList") -> {
                         replyCalls++
-                        if (path.contains("_v2_post_token=")) {
+                        if (replyCalls >= 2) {
                             MockResponse().setBody(
-                                """{"data":[{"id":"c9","uid":"8","username":"CoolUser","message":"验证后的评论"}]}"""
+                                """{"data":[{"id":"c9","uid":"8","username":"CoolUser","message":"重试后的评论"}]}"""
                             )
                         } else {
                             MockResponse().setResponseCode(403).setBody(
@@ -393,11 +393,42 @@ class ViewModelRegressionTest {
         assertTrue(vm.uiState.value.commentsCaptcha != null)
         assertTrue(vm.uiState.value.comments.isEmpty())
 
-        vm.retryComments(postToken = "NEC:414e5c9b:ok", postTokenField = "_v2_post_token")
+        vm.retryComments()
         waitUntil { vm.uiState.value.comments.size == 1 && vm.uiState.value.commentsError == null }
 
         assertEquals(null, vm.uiState.value.commentsError)
         assertEquals(null, vm.uiState.value.commentsCaptcha)
-        assertEquals("验证后的评论", vm.uiState.value.comments.first().message)
+        assertEquals("重试后的评论", vm.uiState.value.comments.first().message)
+    }
+
+    @Test
+    fun `FeedDetailViewModel skips replyList when uncached detail fails and skips detail when cached comments hit captcha`() = runTest(testDispatcher) {
+        val requestedPaths = java.util.Collections.synchronizedList(mutableListOf<String>())
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                requestedPaths.add(path)
+                return MockResponse().setResponseCode(403).setBody(
+                    """{"code":403,"messageStatus":"err_request_captcha_v2","message":"需要验证码"}"""
+                )
+            }
+        }
+
+        // 无缓存正文且详情被验证码拦截 -> 不再空发评论请求
+        val uncachedVm = FeedDetailViewModel(api, feedId = "701")
+        waitUntil { !uncachedVm.uiState.value.isLoading && uncachedVm.uiState.value.error != null }
+        assertEquals(1, requestedPaths.size)
+        assertTrue(requestedPaths[0].startsWith("/v6/feed/detail"))
+
+        // 已有缓存正文且评论区被验证码拦截 -> 优先拉评论，不再紧接着补发详情请求
+        requestedPaths.clear()
+        val cached = FeedItem(
+            id = "702", uid = "2", username = "Author", userAvatar = "",
+            dateline = 0L, dateString = "刚刚", deviceTitle = "", title = "", message = "缓存正文"
+        )
+        val cachedVm = FeedDetailViewModel(api, feedId = "702", initialFeed = cached)
+        waitUntil { !cachedVm.uiState.value.isLoadingComments && cachedVm.uiState.value.commentsCaptcha != null }
+        assertEquals(1, requestedPaths.size)
+        assertTrue(requestedPaths[0].startsWith("/v6/feed/replyList"))
     }
 }

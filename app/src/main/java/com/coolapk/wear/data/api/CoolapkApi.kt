@@ -276,6 +276,16 @@ class CoolapkApi(
         return Result.success(list)
     }
 
+    private fun shouldAbortFallback(error: Throwable?): Boolean {
+        if (error == null) return false
+        if (error is CoolapkCaptchaRequiredException) return true
+        val msg = error.message.orEmpty()
+        return msg.contains("HTTP 429", ignoreCase = true) ||
+            msg.contains("过于频繁") ||
+            msg.contains("status=-415") ||
+            msg.contains("code=-415")
+    }
+
     // ==================== 首页与频道动态流 ====================
 
     suspend fun getHeadlineFeeds(page: Int): Result<List<FeedItem>> {
@@ -285,6 +295,8 @@ class CoolapkApi(
             if (parsed.isNotEmpty() || page > 1) {
                 return Result.success(parsed)
             }
+        }.onFailure { err ->
+            if (shouldAbortFallback(err)) return Result.failure(err)
         }
         return getRecommendFeeds(page)
     }
@@ -326,6 +338,8 @@ class CoolapkApi(
             grouped.onSuccess { body ->
                 val parsed = parseAndCacheFeeds(body)
                 if (parsed.isSuccess) return parsed
+            }.onFailure { err ->
+                if (shouldAbortFallback(err)) return Result.failure(err)
             }
         }
         val endpoints = listOf(
@@ -350,6 +364,8 @@ class CoolapkApi(
             if (parsed.isNotEmpty() || page > 1) {
                 return Result.success(parsed)
             }
+        }.onFailure { err ->
+            if (shouldAbortFallback(err)) return Result.failure(err)
         }
         return executeGet(
             "/v6/page/dataList",
@@ -417,9 +433,11 @@ class CoolapkApi(
                         hadEmptySuccess = true
                     }
                 }.onFailure { err ->
+                    if (shouldAbortFallback(err)) return Result.failure(err)
                     lastError = err
                 }
             }.onFailure { err ->
+                if (shouldAbortFallback(err)) return Result.failure(err)
                 lastError = err
             }
         }
@@ -432,25 +450,8 @@ class CoolapkApi(
 
     // ==================== 动态详情、评论、发布、转发、投票与互动 ====================
 
-    private fun appendCaptchaToken(
-        params: MutableMap<String, String>,
-        postToken: String?,
-        postTokenField: String?
-    ) {
-        val cleanToken = postToken?.trim().orEmpty()
-        if (cleanToken.isNotEmpty()) {
-            params[CaptchaChallenge.sanitizeField(postTokenField)] = cleanToken
-        }
-    }
-
-    suspend fun getFeedDetail(
-        feedId: String,
-        postToken: String? = null,
-        postTokenField: String? = null
-    ): Result<FeedItem> {
-        val params = linkedMapOf("id" to feedId)
-        appendCaptchaToken(params, postToken, postTokenField)
-        return executeGet("/v6/feed/detail", params).mapCatching { body ->
+    suspend fun getFeedDetail(feedId: String): Result<FeedItem> {
+        return executeGet("/v6/feed/detail", mapOf("id" to feedId)).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             val json = JSONObject(body)
             val data = json.optJSONObject("data")
@@ -468,16 +469,10 @@ class CoolapkApi(
      * 通过评论 ID 反查所属原动态 ID（对应 `/v6/feed/replyDetail?id={replyId}`）。
      * 用于消息中心点击「评论@我 / 点赞评论」类通知时精确跳转到原帖。
      */
-    suspend fun resolveFeedIdFromReply(
-        replyId: String,
-        postToken: String? = null,
-        postTokenField: String? = null
-    ): Result<String> {
+    suspend fun resolveFeedIdFromReply(replyId: String): Result<String> {
         val cleanId = replyId.trim()
         if (cleanId.isEmpty()) return Result.failure(IOException("评论 ID 为空"))
-        val params = linkedMapOf("id" to cleanId)
-        appendCaptchaToken(params, postToken, postTokenField)
-        return executeGet("/v6/feed/replyDetail", params).mapCatching { body ->
+        return executeGet("/v6/feed/replyDetail", mapOf("id" to cleanId)).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             val feedId = CoolapkJsonParser.parseReplyFeedId(body)
             if (feedId.isBlank()) throw IOException("未找到原动态")
@@ -495,9 +490,7 @@ class CoolapkApi(
         page: Int,
         sortType: String = "",
         firstItem: String = "",
-        lastItem: String = "",
-        postToken: String? = null,
-        postTokenField: String? = null
+        lastItem: String = ""
     ): Result<List<CommentItem>> {
         val isAuthorOnly = sortType == "author"
         val effectiveListType = when {
@@ -520,7 +513,6 @@ class CoolapkApi(
         params["feedType"] = "feed"
         params["blockStatus"] = "0"
         params["fromFeedAuthor"] = if (isAuthorOnly) "1" else "0"
-        appendCaptchaToken(params, postToken, postTokenField)
         return executeGet("/v6/feed/replyList", params).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             CoolapkJsonParser.parseCommentList(body)
@@ -581,7 +573,7 @@ class CoolapkApi(
                 CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
                 true
             }
-            if (primary.isSuccess) primary
+            if (primary.isSuccess || shouldAbortFallback(primary.exceptionOrNull())) primary
             else executePost("/v6/feed/favorite", mapOf("id" to feedId, "targetType" to "feed")).map { true }
         } else {
             unFavoriteFeed(feedId)
@@ -594,11 +586,13 @@ class CoolapkApi(
             true
         }
         if (primary.isSuccess) return Result.success(true)
+        if (shouldAbortFallback(primary.exceptionOrNull())) return primary
         val fallbackGet = executeGet("/v6/feed/unfavorite", mapOf("id" to feedId)).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             true
         }
         if (fallbackGet.isSuccess) return Result.success(true)
+        if (shouldAbortFallback(fallbackGet.exceptionOrNull())) return fallbackGet
         val params = mapOf("id" to feedId, "targetType" to "feed")
         return executePost("/v6/feed/unFavorite", params).map { true }
     }
@@ -1037,6 +1031,8 @@ class CoolapkApi(
             if (parsed.isNotEmpty() || page > 1) {
                 return Result.success(parsed)
             }
+        }.onFailure { err ->
+            if (shouldAbortFallback(err)) return Result.failure(err)
         }
         return searchFeeds("#$cleanTag#", page)
     }
@@ -1063,6 +1059,8 @@ class CoolapkApi(
             if (parsed.isNotEmpty() || page > 1) {
                 return Result.success(parsed)
             }
+        }.onFailure { err ->
+            if (shouldAbortFallback(err)) return Result.failure(err)
         }
         return executeGet("/v6/product/feedList", mapOf("id" to productId, "page" to page.toString()))
             .mapCatching { body -> parseAndCacheFeeds(body).getOrThrow() }

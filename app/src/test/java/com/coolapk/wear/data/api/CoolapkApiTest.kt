@@ -362,20 +362,11 @@ class CoolapkApiTest {
     }
 
     @Test
-    fun `getFeedDetail and getFeedReplies throw CoolapkCaptchaRequiredException and forward verified postToken`() = runTest {
+    fun `getFeedDetail and getFeedReplies throw CoolapkCaptchaRequiredException and fallback loops stop immediately on captcha`() = runTest {
         val captchaBody = """{"code":403,"messageStatus":"err_request_captcha_v2","message":"需要验证码","messageExtra":"{\"captchaId\":\"cap987654\",\"captchaField\":\"_v2_post_token\"}"}"""
         server.enqueue(MockResponse().setResponseCode(403).setBody(captchaBody))
-        server.enqueue(
-            MockResponse().setResponseCode(200).setBody(
-                """{"data":{"entityType":"feed","id":"5001","uid":"1","username":"Author","message":"验证后内容"}}"""
-            )
-        )
         server.enqueue(MockResponse().setResponseCode(200).setBody(captchaBody))
-        server.enqueue(
-            MockResponse().setResponseCode(200).setBody(
-                """{"data":[{"id":"r1","uid":"2","username":"Commenter","message":"验证后评论"}]}"""
-            )
-        )
+        server.enqueue(MockResponse().setResponseCode(403).setBody(captchaBody))
 
         val detailBlocked = api.getFeedDetail("5001")
         assertTrue(detailBlocked.isFailure)
@@ -384,17 +375,16 @@ class CoolapkApiTest {
         assertEquals("cap987654", detailEx!!.challenge.captchaId)
         server.takeRequest()
 
-        val detailVerified = api.getFeedDetail("5001", postToken = "NEC:cap98765:val", postTokenField = "_v2_post_token")
-        assertTrue(detailVerified.isSuccess)
-        assertEquals("/v6/feed/detail?id=5001&_v2_post_token=NEC%3Acap98765%3Aval", server.takeRequest().path)
-
         val repliesBlocked = api.getFeedReplies("5001", page = 1)
         assertTrue(repliesBlocked.isFailure)
         assertTrue(repliesBlocked.exceptionOrNull() is CoolapkCaptchaRequiredException)
         server.takeRequest()
 
-        val repliesVerified = api.getFeedReplies("5001", page = 1, postToken = "NEC:cap98765:val", postTokenField = "_v2_post_token")
-        assertTrue(repliesVerified.isSuccess)
-        assertTrue(server.takeRequest().path.orEmpty().contains("_v2_post_token=NEC%3Acap98765%3Aval"))
+        // 多路兜底频道遇到验证码时应立即中止，绝不连续轰炸后续 4 个备用接口
+        val countBefore = server.requestCount
+        val digitalBlocked = api.getDigitalFeeds(page = 1)
+        assertTrue(digitalBlocked.isFailure)
+        assertTrue(digitalBlocked.exceptionOrNull() is CoolapkCaptchaRequiredException)
+        assertEquals(countBefore + 1, server.requestCount)
     }
 }
