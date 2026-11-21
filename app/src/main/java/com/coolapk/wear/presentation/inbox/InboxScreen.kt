@@ -50,6 +50,7 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.rememberRevealState
 import com.coolapk.wear.data.model.MessageSession
 import com.coolapk.wear.data.model.NotificationItem
+import com.coolapk.wear.presentation.components.CaptchaVerifyOverlay
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.UserAvatar
@@ -128,7 +129,7 @@ fun InboxScreen(
                 contentPadding = contentPadding,
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotaryEventHandler(listState, enabled = isActivePage)
+                    .rotaryEventHandler(listState, enabled = isActivePage && uiState.pendingCaptcha == null)
             ) {
                 item(key = "inbox_header") {
                     val subtitle = if (uiState.counts.totalUnread > 0) "未读 ${uiState.counts.totalUnread} 条" else null
@@ -289,6 +290,14 @@ fun InboxScreen(
         }
 
         WearCenteredLoadingOverlay(visible = uiState.isLoggedIn && uiState.isLoading && itemCount == 0)
+
+        uiState.pendingCaptcha?.let { challenge ->
+            CaptchaVerifyOverlay(
+                challenge = challenge,
+                onVerified = { token, field -> viewModel.submitCaptchaVerification(token, field) },
+                onDismiss = { viewModel.dismissCaptcha() }
+            )
+        }
     }
 }
 

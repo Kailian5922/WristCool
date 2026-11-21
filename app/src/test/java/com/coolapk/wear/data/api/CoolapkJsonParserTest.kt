@@ -685,4 +685,64 @@ class CoolapkJsonParserTest {
         assertFalse(cols[1].isDefault)
         assertEquals("玩机技巧", cols[1].title)
     }
+
+    @Test
+    fun `parseCaptchaChallenge parses messageExtra ignores normal feed content and parseApiError catches messageStatus`() {
+        val captchaJson = """
+            {
+              "code": 403,
+              "messageStatus": "err_request_captcha_v2",
+              "message": "需要验证码",
+              "messageExtra": "{\"captchaId\":\"abc123456789\",\"captchaField\":\"_v2_post_token\"}"
+            }
+        """.trimIndent()
+        val challenge = CoolapkJsonParser.parseCaptchaChallenge(captchaJson, httpCode = 403)
+        assertNotNull(challenge)
+        assertEquals("需要验证码", challenge!!.message)
+        assertEquals("abc123456789", challenge.captchaId)
+        assertEquals("_v2_post_token", challenge.captchaField)
+        assertEquals("需要验证码", CoolapkJsonParser.parseApiError(captchaJson))
+
+        // 正常评论正文含“验证码”字样时绝不误报人机验证
+        val normalCommentJson = """
+            {"data":[{"id":"c1","uid":"1","username":"U","message":"我刚才收到了短信验证码"}]}
+        """.trimIndent()
+        assertNull(CoolapkJsonParser.parseCaptchaChallenge(normalCommentJson, httpCode = 200))
+        assertNull(CoolapkJsonParser.parseApiError(normalCommentJson))
+
+        // -415 限流错误码也应被 parseApiError 捕获
+        assertEquals(
+            "访问过于频繁",
+            CoolapkJsonParser.parseApiError("""{"code":-415,"message":"访问过于频繁"}""")
+        )
+    }
+
+    @Test
+    fun `parseNotificationFeeds extracts embedded feed objects and skips non-feed notifications`() {
+        val body = """
+            {
+              "data": [
+                {
+                  "entityType": "feed",
+                  "id": "801001",
+                  "uid": "10",
+                  "username": "FeedSender",
+                  "message": "@你 看这条动态"
+                },
+                {
+                  "entityType": "notification",
+                  "id": "n2",
+                  "target_type": "feed_reply",
+                  "target_id": "999",
+                  "fromusername": "Replier",
+                  "note": "回复了你的评论"
+                }
+              ]
+            }
+        """.trimIndent()
+        val feeds = CoolapkJsonParser.parseNotificationFeeds(body)
+        assertEquals(1, feeds.size)
+        assertEquals("801001", feeds[0].id)
+        assertEquals("FeedSender", feeds[0].username)
+    }
 }

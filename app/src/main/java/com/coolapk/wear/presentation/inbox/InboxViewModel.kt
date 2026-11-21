@@ -2,7 +2,9 @@ package com.coolapk.wear.presentation.inbox
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.coolapk.wear.data.api.CaptchaChallenge
 import com.coolapk.wear.data.api.CoolapkApi
+import com.coolapk.wear.data.api.CoolapkCaptchaRequiredException
 import com.coolapk.wear.data.model.MessageSession
 import com.coolapk.wear.data.model.NotificationCount
 import com.coolapk.wear.data.model.NotificationItem
@@ -34,7 +36,8 @@ data class InboxUiState(
     val page: Int = 1,
     val hasMore: Boolean = true,
     val error: String? = null,
-    val actionMessage: String? = null
+    val actionMessage: String? = null,
+    val pendingCaptcha: CaptchaChallenge? = null
 )
 
 class InboxViewModel(
@@ -48,6 +51,7 @@ class InboxViewModel(
     val uiState: StateFlow<InboxUiState> = _uiState.asStateFlow()
 
     private var loadJob: Job? = null
+    private var pendingResolveAction: Pair<NotificationItem, (String?) -> Unit>? = null
 
     init {
         viewModelScope.launch {
@@ -66,7 +70,8 @@ class InboxViewModel(
                             sessions = emptyList(),
                             isLoading = false,
                             isLoadingMore = false,
-                            error = null
+                            error = null,
+                            pendingCaptcha = null
                         )
                     }
                 }
@@ -161,6 +166,8 @@ class InboxViewModel(
 
     fun resolveNotificationFeed(
         item: NotificationItem,
+        postToken: String? = null,
+        postTokenField: String? = null,
         onResolved: (String?) -> Unit
     ) {
         if (item.feedId.isNotBlank()) {
@@ -172,13 +179,39 @@ class InboxViewModel(
             return
         }
         viewModelScope.launch {
-            api.resolveFeedIdFromReply(item.replyId).onSuccess { feedId ->
+            api.resolveFeedIdFromReply(item.replyId, postToken, postTokenField).onSuccess { feedId ->
+                pendingResolveAction = null
+                _uiState.update { it.copy(pendingCaptcha = null) }
                 onResolved(feedId)
             }.onFailure { err ->
-                _uiState.update { it.copy(actionMessage = err.message ?: "无法打开原动态") }
-                onResolved(null)
+                if (err is CoolapkCaptchaRequiredException) {
+                    pendingResolveAction = item to onResolved
+                    _uiState.update { it.copy(pendingCaptcha = err.challenge) }
+                } else {
+                    pendingResolveAction = null
+                    _uiState.update { it.copy(actionMessage = err.message ?: "无法打开原动态") }
+                    onResolved(null)
+                }
             }
         }
+    }
+
+    fun submitCaptchaVerification(postToken: String, captchaField: String) {
+        val pending = pendingResolveAction
+        _uiState.update { it.copy(pendingCaptcha = null) }
+        if (pending != null) {
+            resolveNotificationFeed(
+                item = pending.first,
+                postToken = postToken,
+                postTokenField = captchaField,
+                onResolved = pending.second
+            )
+        }
+    }
+
+    fun dismissCaptcha() {
+        pendingResolveAction = null
+        _uiState.update { it.copy(pendingCaptcha = null) }
     }
 
     fun clearActionMessage() {

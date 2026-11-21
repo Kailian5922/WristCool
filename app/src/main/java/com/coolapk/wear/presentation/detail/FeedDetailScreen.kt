@@ -75,10 +75,12 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import coil.compose.AsyncImage
+import com.coolapk.wear.data.api.CaptchaChallenge
 import com.coolapk.wear.data.model.CommentItem
 import com.coolapk.wear.data.model.VoteInfo
 import com.coolapk.wear.data.util.ImageSaver
 import com.coolapk.wear.data.util.TextSanitizer
+import com.coolapk.wear.presentation.components.CaptchaVerifyOverlay
 import com.coolapk.wear.presentation.components.CommentCard
 import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.HorologistScaffold
@@ -105,6 +107,8 @@ private data class ReplyTarget(
     val username: String = ""
 )
 
+private enum class DetailCaptchaTarget { DETAIL, COMMENTS }
+
 @Composable
 fun FeedDetailScreen(
     viewModel: FeedDetailViewModel,
@@ -125,6 +129,7 @@ fun FeedDetailScreen(
     var galleryState by remember { mutableStateOf<GalleryViewerState?>(null) }
     var pendingDownloadImageUrl by remember { mutableStateOf<String?>(null) }
     var activeReplyTarget by remember { mutableStateOf<ReplyTarget?>(null) }
+    var activeCaptcha by remember { mutableStateOf<Pair<DetailCaptchaTarget, CaptchaChallenge>?>(null) }
     var showForwardOverlay by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
     var showDeleteFeedConfirm by remember { mutableStateOf(false) }
@@ -135,6 +140,7 @@ fun FeedDetailScreen(
 
     val hasAnyOverlay = galleryState != null ||
         activeReplyTarget != null ||
+        activeCaptcha != null ||
         showForwardOverlay ||
         showQrDialog ||
         pendingDownloadImageUrl != null ||
@@ -196,10 +202,59 @@ fun FeedDetailScreen(
             ) {
                 if (uiState.error != null) {
                     item(key = "detail_error") {
-                        WearErrorRetry(
-                            message = uiState.error.orEmpty(),
-                            onRetry = { viewModel.loadDetail() }
-                        )
+                        val detailChallenge = uiState.detailCaptcha
+                        if (detailChallenge != null) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.large)
+                                    .background(colorScheme.surfaceContainer)
+                                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                            ) {
+                                Text(
+                                    text = detailChallenge.message,
+                                    color = colorScheme.onSurface,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "完成酷安安全验证后即可查看动态",
+                                    color = colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyExtraSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                FilledTonalButton(
+                                    onClick = { activeCaptcha = DetailCaptchaTarget.DETAIL to detailChallenge },
+                                    label = { Text("滑动验证", maxLines = 1) },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(5.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    CompactButton(
+                                        onClick = { showQrDialog = true },
+                                        label = { Text("手机扫码", maxLines = 1) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    CompactButton(
+                                        onClick = { viewModel.loadDetail() },
+                                        label = { Text("重试", maxLines = 1) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        } else {
+                            WearErrorRetry(
+                                message = uiState.error.orEmpty(),
+                                onRetry = { viewModel.loadDetail() }
+                            )
+                        }
                     }
                 }
 
@@ -724,6 +779,48 @@ fun FeedDetailScreen(
 
                     if (uiState.isLoadingComments && uiState.comments.isEmpty()) {
                         item(key = "comments_loading") { WearLoadingPlaceholder(useSkeleton = false, height = 56.dp, indicatorSize = 18.dp) }
+                    } else if (uiState.commentsError != null && uiState.comments.isEmpty()) {
+                        item(key = "comments_error") {
+                            val commentChallenge = uiState.commentsCaptcha
+                            if (commentChallenge != null) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(MaterialTheme.shapes.large)
+                                        .background(colorScheme.surfaceContainer)
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        text = "评论区${commentChallenge.message}",
+                                        color = colorScheme.onSurface,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        FilledTonalButton(
+                                            onClick = { activeCaptcha = DetailCaptchaTarget.COMMENTS to commentChallenge },
+                                            label = { Text("滑动验证", maxLines = 1) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        CompactButton(
+                                            onClick = { viewModel.retryComments() },
+                                            label = { Text("重试", maxLines = 1) }
+                                        )
+                                    }
+                                }
+                            } else {
+                                WearErrorRetry(
+                                    message = uiState.commentsError.orEmpty(),
+                                    onRetry = { viewModel.retryComments() }
+                                )
+                            }
+                        }
                     } else if (uiState.comments.isEmpty() && !uiState.isLoading) {
                         item(key = "comments_empty") {
                             WearEmptyState("暂无评论，点击底部“写回复”抢沙发吧")
@@ -908,11 +1005,34 @@ fun FeedDetailScreen(
             )
         }
 
+        // 酷安交互式安全验证浮层
+        activeCaptcha?.let { (target, challenge) ->
+            CaptchaVerifyOverlay(
+                challenge = challenge,
+                onVerified = { token, field ->
+                    activeCaptcha = null
+                    when (target) {
+                        DetailCaptchaTarget.DETAIL -> viewModel.loadDetail(postToken = token, postTokenField = field)
+                        DetailCaptchaTarget.COMMENTS -> viewModel.retryComments(postToken = token, postTokenField = field)
+                    }
+                },
+                onDismiss = { activeCaptcha = null },
+                onOpenQrFallback = if (viewModel.feedId.isNotBlank()) {
+                    {
+                        activeCaptcha = null
+                        showQrDialog = true
+                    }
+                } else {
+                    null
+                }
+            )
+        }
+
         // 手机扫码查看浮层
-        val currentFeed = uiState.feed
-        if (showQrDialog && currentFeed != null) {
+        val qrFeedId = uiState.feed?.id?.ifBlank { viewModel.feedId } ?: viewModel.feedId
+        if (showQrDialog && qrFeedId.isNotBlank()) {
             QrCodeOverlay(
-                feedUrl = "https://www.coolapk.com/feed/${currentFeed.id}",
+                feedUrl = "https://www.coolapk.com/feed/$qrFeedId",
                 onDismiss = { showQrDialog = false }
             )
         }

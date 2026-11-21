@@ -32,7 +32,7 @@ class DeviceProfile(context: Context) {
         }
 
     val userAgent: String =
-        "Dalvik/2.1.0 (Linux; U; Android 14; 23113RKC6C Build/UKQ1.230804.001) (#Build; Xiaomi; 23113RKC6C; UKQ1.230804.001; 14) +CoolMarket/16.2.0-2604201"
+        "Dalvik/2.1.0 (Linux; U; Android 14; 23113RKC6C Build/UKQ1.230804.001) (#Build; Xiaomi; 23113RKC6C; UKQ1.230804.001; 14) +CoolMarket/16.2.0-2604201-universal"
 
     companion object {
         private const val PREFS_NAME = "coolapk_wear_device"

@@ -358,4 +358,46 @@ class ViewModelRegressionTest {
         assertEquals(2, headlineCalls)
         assertEquals(listOf("h2"), vm.uiState.value.items.map { it.id })
     }
+
+    @Test
+    fun `FeedDetailViewModel surfaces comment captcha error instead of empty state and recovers on retry`() = runTest(testDispatcher) {
+        var replyCalls = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/v6/feed/detail") -> MockResponse().setBody(
+                        """{"data":{"entityType":"feed","id":"700","uid":"2","username":"Author","message":"正文"}}"""
+                    )
+                    path.startsWith("/v6/feed/replyList") -> {
+                        replyCalls++
+                        if (path.contains("_v2_post_token=")) {
+                            MockResponse().setBody(
+                                """{"data":[{"id":"c9","uid":"8","username":"CoolUser","message":"验证后的评论"}]}"""
+                            )
+                        } else {
+                            MockResponse().setResponseCode(403).setBody(
+                                """{"code":403,"messageStatus":"err_request_captcha_v2","message":"需要验证码"}"""
+                            )
+                        }
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        val vm = FeedDetailViewModel(api, feedId = "700")
+        waitUntil { !vm.uiState.value.isLoading && !vm.uiState.value.isLoadingComments && replyCalls >= 1 }
+
+        assertEquals("需要验证码", vm.uiState.value.commentsError)
+        assertTrue(vm.uiState.value.commentsCaptcha != null)
+        assertTrue(vm.uiState.value.comments.isEmpty())
+
+        vm.retryComments(postToken = "NEC:414e5c9b:ok", postTokenField = "_v2_post_token")
+        waitUntil { vm.uiState.value.comments.size == 1 && vm.uiState.value.commentsError == null }
+
+        assertEquals(null, vm.uiState.value.commentsError)
+        assertEquals(null, vm.uiState.value.commentsCaptcha)
+        assertEquals("验证后的评论", vm.uiState.value.comments.first().message)
+    }
 }

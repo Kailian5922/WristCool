@@ -24,6 +24,34 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
+data class CaptchaChallenge(
+    val message: String = "需要完成人机验证",
+    val captchaId: String = DEFAULT_COOLAPK_CAPTCHA_ID,
+    val captchaField: String = DEFAULT_CAPTCHA_FIELD,
+    val messageStatus: String = ""
+) {
+    companion object {
+        const val DEFAULT_COOLAPK_CAPTCHA_ID = "414e5c9b866a03db03f860a1a9101672"
+        const val DEFAULT_CAPTCHA_FIELD = "_v2_post_token"
+
+        fun sanitizeField(raw: String?): String {
+            val trimmed = raw?.trim().orEmpty()
+            return if (trimmed.startsWith("_") &&
+                trimmed.length <= 64 &&
+                trimmed.all { it.isLetterOrDigit() || it == '_' }
+            ) {
+                trimmed
+            } else {
+                DEFAULT_CAPTCHA_FIELD
+            }
+        }
+    }
+}
+
+class CoolapkCaptchaRequiredException(
+    val challenge: CaptchaChallenge
+) : java.io.IOException(challenge.message)
+
 /**
  * 酷安 REST API JSON 纯解析器（无 Android 依赖，便于完整 JVM 单元测试）。
  * 支持动态、长图文、转发引用、投票、评论/楼中楼、通知、私信、收藏单、数码产品与应用等全量实体。
@@ -46,22 +74,90 @@ object CoolapkJsonParser {
     )
 
     /**
+     * 解析酷安服务端返回的人机验证要求（如 `err_request_captcha_v2` / HTTP 403 需要验证码）。
+     * 仅检测顶层错误/状态字段，避免误判正常动态或评论正文里包含“验证码”字样的数据。
+     */
+    fun parseCaptchaChallenge(responseBody: String, httpCode: Int = 200): CaptchaChallenge? {
+        if (responseBody.isBlank()) return null
+        return try {
+            val json = JSONObject(responseBody)
+            val messageStatus = optStringClean(json, "messageStatus", "message_status")
+            val msg = optStringClean(json, "message")
+            val err = optStringClean(json, "error")
+            val code = if (json.has("code") && !json.isNull("code")) json.optInt("code", 0) else 0
+            val status = if (json.has("status") && !json.isNull("status")) json.optInt("status", 0) else 0
+            val hasValidData = json.has("data") && !json.isNull("data") &&
+                (json.optJSONObject("data") != null || json.optJSONArray("data") != null)
+
+            var parsedCaptchaId = optStringClean(json, "captchaId", "captcha_id")
+            var parsedCaptchaField = optStringClean(json, "captchaField", "captcha_field")
+
+            val extraObj = json.optJSONObject("messageExtra")
+                ?: json.optJSONObject("extra")
+                ?: run {
+                    val extraStr = optStringClean(json, "messageExtra", "extra")
+                    if (extraStr.startsWith("{")) runCatching { JSONObject(extraStr) }.getOrNull() else null
+                }
+            if (extraObj != null) {
+                if (parsedCaptchaId.isBlank()) {
+                    parsedCaptchaId = optStringClean(extraObj, "captchaId", "captcha_id")
+                }
+                if (parsedCaptchaField.isBlank()) {
+                    parsedCaptchaField = optStringClean(extraObj, "captchaField", "captcha_field")
+                }
+            }
+
+            val statusIndicatesCaptcha = messageStatus.contains("captcha", ignoreCase = true)
+            val hasExplicitCaptchaId = parsedCaptchaId.isNotBlank()
+            val reasonText = listOf(messageStatus, msg, err).joinToString(" ")
+            val errorMentionsCaptcha = (!hasValidData || httpCode == 403 || code == 403 || status < 0) &&
+                (reasonText.contains("验证码") || reasonText.contains("captcha", ignoreCase = true))
+
+            if (statusIndicatesCaptcha || hasExplicitCaptchaId || errorMentionsCaptcha) {
+                CaptchaChallenge(
+                    message = msg.ifBlank { "需要完成人机验证" },
+                    captchaId = parsedCaptchaId.ifBlank { CaptchaChallenge.DEFAULT_COOLAPK_CAPTCHA_ID },
+                    captchaField = CaptchaChallenge.sanitizeField(parsedCaptchaField),
+                    messageStatus = messageStatus
+                )
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
      * 检查酷安 JSON 业务错误。
-     * 酷安接口在未登录、无权限或参数异常时常返回 HTTP 200 + `{"status": -1, "message": "..."}` 或 `{"error": "..."}`。
+     * 兼容 HTTP 200 下的 `status < 0`、`error`、`messageStatus: err_*` 与 `code == 403 / < 0`。
      */
     fun parseApiError(responseBody: String): String? {
         if (responseBody.isBlank()) return null
+        parseCaptchaChallenge(responseBody)?.let { return it.message }
         return try {
             val json = JSONObject(responseBody)
             val err = optStringClean(json, "error")
             val msg = optStringClean(json, "message")
+            val messageStatus = optStringClean(json, "messageStatus", "message_status")
             if (err.isNotBlank() && err != "0") {
                 return msg.ifBlank { err }
+            }
+            if (messageStatus.startsWith("err_", ignoreCase = true)) {
+                return msg.ifBlank { messageStatus }
             }
             if (json.has("status") && !json.isNull("status")) {
                 val status = json.optInt("status", 0)
                 if (status < 0) {
                     return msg.ifBlank { "请求失败 (status=$status)" }
+                }
+            }
+            val hasValidData = json.has("data") && !json.isNull("data") &&
+                (json.optJSONObject("data") != null || json.optJSONArray("data") != null)
+            if (!hasValidData && json.has("code") && !json.isNull("code")) {
+                val code = json.optInt("code", 0)
+                if (code == 403 || code < 0) {
+                    return msg.ifBlank { "请求失败 (code=$code)" }
                 }
             }
             null
@@ -918,6 +1014,34 @@ object CoolapkJsonParser {
                     )
                 )
             }
+        }
+    }
+
+    /**
+     * 提取通知接口（如 `@me`、`feedLikeList`）中已直接下发的动态实体用于预热本地内存缓存，
+     * 避免从消息中心点进动态时因详情接口偶发延迟或拦截而空白无内容。
+     */
+    fun parseNotificationFeeds(responseBody: String): List<FeedItem> {
+        if (responseBody.isBlank()) return emptyList()
+        return try {
+            val json = JSONObject(responseBody)
+            val dataArray = json.optJSONArray("data") ?: return emptyList()
+            buildList {
+                for (i in 0 until dataArray.length()) {
+                    val obj = dataArray.optJSONObject(i) ?: continue
+                    val feedObj = when {
+                        hasExplicitFeedType(obj) -> obj
+                        else -> listOfNotNull(
+                            obj.optJSONObject("feedInfo"),
+                            obj.optJSONObject("targetFeed"),
+                            obj.optJSONObject("feed")
+                        ).firstOrNull { isFeedLikeJson(it) }
+                    } ?: continue
+                    parseSingleFeed(feedObj)?.let(::add)
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 

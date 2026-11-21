@@ -320,4 +320,81 @@ class CoolapkApiTest {
         assertEquals(listOf("556677"), histRes.getOrThrow().map { it.id })
         assertEquals("/v6/user/hitHistoryList?type=feed&page=1", server.takeRequest().path)
     }
+
+    @Test
+    fun `getFeedReplies and getCommentSubReplies send official APK v16 query parameters and cursors`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"id":"c1","uid":"1","username":"U1","message":"好帖"}]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"id":"c2","uid":"2","username":"U2","message":"第二页"}]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"id":"sub2","uid":"3","username":"U3","message":"楼中楼"}]}"""))
+
+        assertTrue(api.getFeedReplies(feedId = "12345", page = 1).isSuccess)
+        assertEquals(
+            "/v6/feed/replyList?id=12345&listType=lastupdate_desc&page=1&discussMode=1&feedType=feed&blockStatus=0&fromFeedAuthor=0",
+            server.takeRequest().path
+        )
+
+        assertTrue(
+            api.getFeedReplies(
+                feedId = "12345",
+                page = 2,
+                sortType = "popular",
+                firstItem = "c1",
+                lastItem = "c10"
+            ).isSuccess
+        )
+        assertEquals(
+            "/v6/feed/replyList?id=12345&listType=popular&page=2&firstItem=c1&lastItem=c10&discussMode=1&feedType=feed&blockStatus=0&fromFeedAuthor=0",
+            server.takeRequest().path
+        )
+
+        assertTrue(api.getFeedReplies(feedId = "12345", page = 1, sortType = "author").isSuccess)
+        assertEquals(
+            "/v6/feed/replyList?id=12345&page=1&discussMode=1&feedType=feed&blockStatus=0&fromFeedAuthor=1",
+            server.takeRequest().path
+        )
+
+        assertTrue(api.getCommentSubReplies(commentId = "c1", page = 2, lastItem = "sub1").isSuccess)
+        assertEquals(
+            "/v6/feed/replyList?id=c1&listType=&page=2&discussMode=0&feedType=feed_reply&blockStatus=0&fromFeedAuthor=0&lastItem=sub1",
+            server.takeRequest().path
+        )
+    }
+
+    @Test
+    fun `getFeedDetail and getFeedReplies throw CoolapkCaptchaRequiredException and forward verified postToken`() = runTest {
+        val captchaBody = """{"code":403,"messageStatus":"err_request_captcha_v2","message":"需要验证码","messageExtra":"{\"captchaId\":\"cap987654\",\"captchaField\":\"_v2_post_token\"}"}"""
+        server.enqueue(MockResponse().setResponseCode(403).setBody(captchaBody))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":{"entityType":"feed","id":"5001","uid":"1","username":"Author","message":"验证后内容"}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(captchaBody))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":[{"id":"r1","uid":"2","username":"Commenter","message":"验证后评论"}]}"""
+            )
+        )
+
+        val detailBlocked = api.getFeedDetail("5001")
+        assertTrue(detailBlocked.isFailure)
+        val detailEx = detailBlocked.exceptionOrNull() as? CoolapkCaptchaRequiredException
+        assertTrue(detailEx != null)
+        assertEquals("cap987654", detailEx!!.challenge.captchaId)
+        server.takeRequest()
+
+        val detailVerified = api.getFeedDetail("5001", postToken = "NEC:cap98765:val", postTokenField = "_v2_post_token")
+        assertTrue(detailVerified.isSuccess)
+        assertEquals("/v6/feed/detail?id=5001&_v2_post_token=NEC%3Acap98765%3Aval", server.takeRequest().path)
+
+        val repliesBlocked = api.getFeedReplies("5001", page = 1)
+        assertTrue(repliesBlocked.isFailure)
+        assertTrue(repliesBlocked.exceptionOrNull() is CoolapkCaptchaRequiredException)
+        server.takeRequest()
+
+        val repliesVerified = api.getFeedReplies("5001", page = 1, postToken = "NEC:cap98765:val", postTokenField = "_v2_post_token")
+        assertTrue(repliesVerified.isSuccess)
+        assertTrue(server.takeRequest().path.orEmpty().contains("_v2_post_token=NEC%3Acap98765%3Aval"))
+    }
 }

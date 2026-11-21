@@ -181,6 +181,9 @@ class CoolapkApi(
             val req = buildRequest(path, queryParams).build()
             okHttpClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
+                CoolapkJsonParser.parseCaptchaChallenge(body, response.code)?.let { challenge ->
+                    return@withContext Result.failure(CoolapkCaptchaRequiredException(challenge))
+                }
                 if (!response.isSuccessful) {
                     val serverMsg = CoolapkJsonParser.parseApiError(body)
                     return@withContext Result.failure(
@@ -209,6 +212,9 @@ class CoolapkApi(
             val req = buildRequest(path, queryParams).post(formBuilder.build()).build()
             okHttpClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
+                CoolapkJsonParser.parseCaptchaChallenge(body, response.code)?.let { challenge ->
+                    return@withContext Result.failure(CoolapkCaptchaRequiredException(challenge))
+                }
                 if (!response.isSuccessful) {
                     val serverMsg = CoolapkJsonParser.parseApiError(body)
                     return@withContext Result.failure(
@@ -240,6 +246,9 @@ class CoolapkApi(
             val req = buildRequest(path, queryParams).post(bodyBuilder.build()).build()
             okHttpClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
+                CoolapkJsonParser.parseCaptchaChallenge(body, response.code)?.let { challenge ->
+                    return@withContext Result.failure(CoolapkCaptchaRequiredException(challenge))
+                }
                 if (!response.isSuccessful) {
                     val serverMsg = CoolapkJsonParser.parseApiError(body)
                     return@withContext Result.failure(
@@ -423,8 +432,25 @@ class CoolapkApi(
 
     // ==================== 动态详情、评论、发布、转发、投票与互动 ====================
 
-    suspend fun getFeedDetail(feedId: String): Result<FeedItem> {
-        return executeGet("/v6/feed/detail", mapOf("id" to feedId)).mapCatching { body ->
+    private fun appendCaptchaToken(
+        params: MutableMap<String, String>,
+        postToken: String?,
+        postTokenField: String?
+    ) {
+        val cleanToken = postToken?.trim().orEmpty()
+        if (cleanToken.isNotEmpty()) {
+            params[CaptchaChallenge.sanitizeField(postTokenField)] = cleanToken
+        }
+    }
+
+    suspend fun getFeedDetail(
+        feedId: String,
+        postToken: String? = null,
+        postTokenField: String? = null
+    ): Result<FeedItem> {
+        val params = linkedMapOf("id" to feedId)
+        appendCaptchaToken(params, postToken, postTokenField)
+        return executeGet("/v6/feed/detail", params).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             val json = JSONObject(body)
             val data = json.optJSONObject("data")
@@ -442,10 +468,16 @@ class CoolapkApi(
      * 通过评论 ID 反查所属原动态 ID（对应 `/v6/feed/replyDetail?id={replyId}`）。
      * 用于消息中心点击「评论@我 / 点赞评论」类通知时精确跳转到原帖。
      */
-    suspend fun resolveFeedIdFromReply(replyId: String): Result<String> {
+    suspend fun resolveFeedIdFromReply(
+        replyId: String,
+        postToken: String? = null,
+        postTokenField: String? = null
+    ): Result<String> {
         val cleanId = replyId.trim()
         if (cleanId.isEmpty()) return Result.failure(IOException("评论 ID 为空"))
-        return executeGet("/v6/feed/replyDetail", mapOf("id" to cleanId)).mapCatching { body ->
+        val params = linkedMapOf("id" to cleanId)
+        appendCaptchaToken(params, postToken, postTokenField)
+        return executeGet("/v6/feed/replyDetail", params).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             val feedId = CoolapkJsonParser.parseReplyFeedId(body)
             if (feedId.isBlank()) throw IOException("未找到原动态")
@@ -453,20 +485,42 @@ class CoolapkApi(
         }
     }
 
+    /**
+     * 获取动态一级评论（严格对齐酷安官方 APK ReplyListV13 / coolapk-desktop 参数规范）：
+     * - 默认排序传 `listType=lastupdate_desc`，仅楼主筛选时省略 `listType` 并传 `fromFeedAuthor=1`；
+     * - 完整附带 `discussMode=1`、`feedType=feed`、`blockStatus=0`、`fromFeedAuthor` 及翻页游标 `firstItem`/`lastItem`。
+     */
     suspend fun getFeedReplies(
         feedId: String,
         page: Int,
-        sortType: String = ""
+        sortType: String = "",
+        firstItem: String = "",
+        lastItem: String = "",
+        postToken: String? = null,
+        postTokenField: String? = null
     ): Result<List<CommentItem>> {
-        val params = mutableMapOf(
-            "id" to feedId,
-            "page" to page.toString(),
-            "listType" to if (sortType == "author") "" else sortType
-        )
-        if (sortType == "author") {
-            params["fromFeedAuthor"] = "1"
-            params["isAuthor"] = "1"
+        val isAuthorOnly = sortType == "author"
+        val effectiveListType = when {
+            isAuthorOnly -> ""
+            sortType.isBlank() -> "lastupdate_desc"
+            else -> sortType.trim()
         }
+        val params = linkedMapOf("id" to feedId)
+        if (effectiveListType.isNotEmpty()) {
+            params["listType"] = effectiveListType
+        }
+        params["page"] = page.toString()
+        if (firstItem.isNotBlank()) {
+            params["firstItem"] = firstItem.trim()
+        }
+        if (lastItem.isNotBlank()) {
+            params["lastItem"] = lastItem.trim()
+        }
+        params["discussMode"] = "1"
+        params["feedType"] = "feed"
+        params["blockStatus"] = "0"
+        params["fromFeedAuthor"] = if (isAuthorOnly) "1" else "0"
+        appendCaptchaToken(params, postToken, postTokenField)
         return executeGet("/v6/feed/replyList", params).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             CoolapkJsonParser.parseCommentList(body)
@@ -475,15 +529,21 @@ class CoolapkApi(
 
     suspend fun getCommentSubReplies(
         commentId: String,
-        page: Int = 1
+        page: Int = 1,
+        lastItem: String = ""
     ): Result<List<SubReplyItem>> {
-        val params = mapOf(
+        val params = linkedMapOf(
             "id" to commentId,
-            "page" to page.toString(),
             "listType" to "",
+            "page" to page.toString(),
             "discussMode" to "0",
-            "feedType" to "feed_reply"
+            "feedType" to "feed_reply",
+            "blockStatus" to "0",
+            "fromFeedAuthor" to "0"
         )
+        if (lastItem.isNotBlank()) {
+            params["lastItem"] = lastItem.trim()
+        }
         return executeGet("/v6/feed/replyList", params).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             CoolapkJsonParser.parseSubReplyList(body)
@@ -701,6 +761,7 @@ class CoolapkApi(
         }
         return executeGet("/v6/notification/$safeType", mapOf("page" to page.toString())).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
+            FeedMemoryCache.putAll(CoolapkJsonParser.parseNotificationFeeds(body))
             CoolapkJsonParser.parseNotificationList(body)
         }
     }
