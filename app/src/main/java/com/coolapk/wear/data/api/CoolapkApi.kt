@@ -845,7 +845,15 @@ class CoolapkApi(
     }
 
     suspend fun deleteNotification(notificationId: String): Result<Boolean> {
-        return executePost("/v6/notification/delete", formParams = mapOf("id" to notificationId)).map { true }
+        val cleanId = notificationId.trim()
+        if (cleanId.isEmpty() || cleanId.startsWith("n_")) {
+            return Result.failure(IOException("该条通知不支持单条删除"))
+        }
+        return executePost(
+            path = "/v6/notification/delete",
+            formParams = mapOf("id" to cleanId),
+            queryParams = mapOf("id" to cleanId)
+        ).map { true }
     }
 
     suspend fun getMessageSessions(page: Int): Result<List<MessageSession>> {
@@ -1147,9 +1155,11 @@ class CoolapkApi(
     }
 
     suspend fun toggleFollowProduct(productId: String, follow: Boolean): Result<Boolean> {
+        val params = mapOf("id" to productId, "status" to if (follow) "1" else "0")
         return executePost(
             "/v6/product/changeFollowStatus",
-            queryParams = mapOf("id" to productId, "status" to if (follow) "1" else "0")
+            formParams = params,
+            queryParams = params
         ).map { true }
     }
 

@@ -213,7 +213,8 @@ class CoolapkApiTest {
     @Test
     fun `notifications and sendPrivateMessage use expected Coolapk v16 endpoints and multipart body`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"commentme":2,"message":1}}"""))
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"id":"n1","fromusername":"A","note":"赞了你"}]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"id":"9001","fromusername":"A","note":"赞了你"}]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"count":"删除成功"}}"""))
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"m9"}}"""))
 
         val countRes = api.getNotificationCount()
@@ -225,6 +226,13 @@ class CoolapkApiTest {
         assertTrue(listRes.isSuccess)
         assertEquals(1, listRes.getOrThrow().size)
         assertEquals("/v6/notification/feedLikeList?page=1", server.takeRequest().path)
+
+        val delRes = api.deleteNotification("9001")
+        assertTrue(delRes.isSuccess)
+        val delReq = server.takeRequest()
+        assertEquals("POST", delReq.method)
+        assertEquals("/v6/notification/delete?id=9001", delReq.path)
+        assertEquals("id=9001", delReq.body.readUtf8())
 
         val pmRes = api.sendPrivateMessage("888", "手表私信")
         assertTrue(pmRes.isSuccess)

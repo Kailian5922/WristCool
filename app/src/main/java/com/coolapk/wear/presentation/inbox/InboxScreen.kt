@@ -27,6 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,17 +46,16 @@ import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
-import androidx.wear.compose.material3.SwipeToReveal
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
-import androidx.wear.compose.material3.rememberRevealState
 import com.coolapk.wear.data.model.MessageSession
 import com.coolapk.wear.data.model.NotificationItem
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.UserAvatar
 import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
+import com.coolapk.wear.presentation.components.WearConfirmDialog
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.WearEmptyState
 import com.coolapk.wear.presentation.components.WearErrorRetry
@@ -77,6 +79,10 @@ fun InboxScreen(
     val transformationSpec = rememberTransformationSpec()
     val tabScroll = rememberScrollState()
     val context = LocalContext.current
+
+    var pendingDeleteSession by remember { mutableStateOf<MessageSession?>(null) }
+    var pendingDeleteNotification by remember { mutableStateOf<NotificationItem?>(null) }
+    val hasConfirmDialog = pendingDeleteSession != null || pendingDeleteNotification != null
 
     LaunchedEffect(uiState.actionMessage) {
         val msg = uiState.actionMessage
@@ -128,7 +134,7 @@ fun InboxScreen(
                 contentPadding = contentPadding,
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotaryEventHandler(listState, enabled = isActivePage)
+                    .rotaryEventHandler(listState, enabled = isActivePage && !hasConfirmDialog)
             ) {
                 item(key = "inbox_header") {
                     val subtitle = if (uiState.counts.totalUnread > 0) "未读 ${uiState.counts.totalUnread} 条" else null
@@ -212,67 +218,43 @@ fun InboxScreen(
 
                 if (uiState.currentTab == InboxTab.MESSAGES) {
                     itemsIndexed(uiState.sessions, key = { idx, s -> "sess_${s.ukey}_$idx" }) { _, session ->
-                        val revealState = rememberRevealState()
-                        SwipeToReveal(
-                            revealState = revealState,
-                            onSwipePrimaryAction = { viewModel.deleteSession(session) },
-                            primaryAction = {
-                                PrimaryActionButton(
-                                    onClick = { viewModel.deleteSession(session) },
-                                    icon = { Icon(Icons.Rounded.Delete, contentDescription = "删除会话") },
-                                    text = { Text("删除") }
-                                )
+                        SessionCard(
+                            session = session,
+                            transformation = SurfaceTransformation(transformationSpec),
+                            onClick = {
+                                onOpenChat(session.ukey, session.partnerUid, session.partnerUsername)
                             },
+                            onDeleteClick = { pendingDeleteSession = session },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .transformedHeight(this, transformationSpec)
                                 .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                        ) {
-                            SessionCard(
-                                session = session,
-                                transformation = SurfaceTransformation(transformationSpec),
-                                onClick = {
-                                    onOpenChat(session.ukey, session.partnerUid, session.partnerUsername)
-                                }
-                            )
-                        }
+                        )
                     }
                 } else {
                     itemsIndexed(uiState.notifications, key = { idx, n -> "notif_${n.id}_$idx" }) { _, item ->
-                        val revealState = rememberRevealState()
-                        SwipeToReveal(
-                            revealState = revealState,
-                            onSwipePrimaryAction = { viewModel.deleteNotification(item) },
-                            primaryAction = {
-                                PrimaryActionButton(
-                                    onClick = { viewModel.deleteNotification(item) },
-                                    icon = { Icon(Icons.Rounded.Delete, contentDescription = "删除通知") },
-                                    text = { Text("删除") }
-                                )
+                        NotificationCard(
+                            item = item,
+                            transformation = SurfaceTransformation(transformationSpec),
+                            onClick = {
+                                when {
+                                    item.feedId.isNotBlank() -> onFeedClick(item.feedId)
+                                    item.replyId.isNotBlank() -> viewModel.resolveNotificationFeed(item) { resolvedId ->
+                                        if (!resolvedId.isNullOrBlank()) {
+                                            onFeedClick(resolvedId)
+                                        } else if (item.fromUid.isNotBlank()) {
+                                            onUserClick(item.fromUid)
+                                        }
+                                    }
+                                    item.fromUid.isNotBlank() -> onUserClick(item.fromUid)
+                                }
                             },
+                            onDeleteClick = { pendingDeleteNotification = item },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .transformedHeight(this, transformationSpec)
                                 .minimumVerticalContentPadding(CardDefaults.minimumVerticalListContentPadding)
-                        ) {
-                            NotificationCard(
-                                item = item,
-                                transformation = SurfaceTransformation(transformationSpec),
-                                onClick = {
-                                    when {
-                                        item.feedId.isNotBlank() -> onFeedClick(item.feedId)
-                                        item.replyId.isNotBlank() -> viewModel.resolveNotificationFeed(item) { resolvedId ->
-                                            if (!resolvedId.isNullOrBlank()) {
-                                                onFeedClick(resolvedId)
-                                            } else if (item.fromUid.isNotBlank()) {
-                                                onUserClick(item.fromUid)
-                                            }
-                                        }
-                                        item.fromUid.isNotBlank() -> onUserClick(item.fromUid)
-                                    }
-                                }
-                            )
-                        }
+                        )
                     }
                 }
 
@@ -289,6 +271,40 @@ fun InboxScreen(
         }
 
         WearCenteredLoadingOverlay(visible = uiState.isLoggedIn && uiState.isLoading && itemCount == 0)
+
+        WearConfirmDialog(
+            visible = pendingDeleteSession != null,
+            title = "删除私信会话",
+            message = pendingDeleteSession?.let { "删除与 ${it.partnerUsername} 的私信会话？" }.orEmpty(),
+            confirmIcon = Icons.Rounded.Delete,
+            confirmContentDescription = "确认删除",
+            isDestructive = true,
+            onConfirm = {
+                val target = pendingDeleteSession
+                pendingDeleteSession = null
+                if (target != null) {
+                    viewModel.deleteSession(target)
+                }
+            },
+            onDismiss = { pendingDeleteSession = null }
+        )
+
+        WearConfirmDialog(
+            visible = pendingDeleteNotification != null,
+            title = "删除通知",
+            message = "确认删除这条互动通知？",
+            confirmIcon = Icons.Rounded.Delete,
+            confirmContentDescription = "确认删除",
+            isDestructive = true,
+            onConfirm = {
+                val target = pendingDeleteNotification
+                pendingDeleteNotification = null
+                if (target != null) {
+                    viewModel.deleteNotification(target)
+                }
+            },
+            onDismiss = { pendingDeleteNotification = null }
+        )
     }
 }
 
@@ -296,13 +312,16 @@ fun InboxScreen(
 private fun SessionCard(
     session: MessageSession,
     transformation: SurfaceTransformation,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
         onClick = onClick,
+        onLongClick = onDeleteClick,
         transformation = transformation,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         colors = CardDefaults.cardColors(
             containerColor = if (session.unreadNum > 0) colorScheme.surfaceContainerHigh else colorScheme.surfaceContainer,
             contentColor = colorScheme.onSurface
@@ -355,11 +374,26 @@ private fun SessionCard(
                 }
             }
             if (session.unreadNum > 0) {
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 WearPillBadge(
                     text = if (session.unreadNum > 99) "99+" else "${session.unreadNum}",
                     containerColor = colorScheme.errorContainer,
                     contentColor = colorScheme.onErrorContainer
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onDeleteClick)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = "删除会话",
+                    tint = colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(14.dp)
                 )
             }
         }
@@ -370,13 +404,16 @@ private fun SessionCard(
 private fun NotificationCard(
     item: NotificationItem,
     transformation: SurfaceTransformation,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
         onClick = onClick,
+        onLongClick = onDeleteClick,
         transformation = transformation,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         colors = CardDefaults.cardColors(
             containerColor = if (item.isNew) colorScheme.surfaceContainerHigh else colorScheme.surfaceContainer,
             contentColor = colorScheme.onSurface
@@ -406,6 +443,21 @@ private fun NotificationCard(
                     text = item.dateString,
                     color = colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyExtraSmall
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onDeleteClick)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = "删除通知",
+                    tint = colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(13.dp)
                 )
             }
         }
