@@ -101,15 +101,36 @@ class TextSanitizerAndCookieTest {
     }
 
     @Test
-    fun `AuthRepository parseCompanionPayload parses JSON and rejects invalid payload`() {
-        val ok = AuthRepository.parseCompanionPayload("""{"cookie":"uid=88; token=xyz==","ddid":"d1"}""")
+    fun `AuthRepository parseCompanionPayload parses JSON with deviceId and rejects invalid payload`() {
+        val ok = AuthRepository.parseCompanionPayload(
+            """{"cookie":"uid=88; token=xyz==","ddid":"d1","deviceId":"DUSampleDeviceId1234567890abcd"}"""
+        )
         assertTrue(ok.isSuccess)
         assertEquals("88", ok.getOrThrow().uid)
         assertEquals("d1", ok.getOrThrow().ddid)
+        assertEquals("DUSampleDeviceId1234567890abcd", ok.getOrThrow().deviceId)
         assertTrue(ok.getOrThrow().isLoggedIn)
 
         val bad = AuthRepository.parseCompanionPayload("""{"cookie":"foo=bar"}""")
         assertTrue(bad.isFailure)
+    }
+
+    @Test
+    fun `DeviceProfile parses official Shuzilm device ID and embeds it into X-App-Device`() {
+        val sampleLog = """
+            设备ID: DUSampleDeviceId1234567890abcd
+            AndroidID: 0123456789abcdef
+            UUID: 550e8400-e29b-41d4-a716-446655440000
+        """.trimIndent()
+        val parsed = com.coolapk.wear.data.api.DeviceProfile.parseShuzilmDeviceId(sampleLog)
+        assertEquals("DUSampleDeviceId1234567890abcd", parsed)
+        assertEquals("", com.coolapk.wear.data.api.DeviceProfile.parseShuzilmDeviceId("550e8400-e29b-41d4-a716-446655440000"))
+
+        val deviceCode = com.coolapk.wear.data.api.DeviceProfile.generateOfficialDeviceCode(parsed)
+        var reversed = deviceCode.reversed()
+        while (reversed.length % 4 != 0) reversed += "="
+        val decoded = String(java.util.Base64.getDecoder().decode(reversed), Charsets.UTF_8)
+        assertTrue("X-App-Device first segment must be parsed DU id", decoded.startsWith("$parsed; "))
     }
 
     @Test

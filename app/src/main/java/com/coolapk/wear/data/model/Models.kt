@@ -7,7 +7,8 @@ data class AuthCredentials(
     val ddid: String = "",
     val uid: String = "",
     val username: String = "",
-    val avatar: String = ""
+    val avatar: String = "",
+    val deviceId: String = ""
 ) {
     val isLoggedIn: Boolean
         get() = CookieParser.hasValidAuth(cookie)

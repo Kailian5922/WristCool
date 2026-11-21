@@ -58,11 +58,14 @@ class CoolapkAuth(@Volatile private var deviceCode: String) {
      * 酷安 Token V2 签名（严格对齐 c001apk-Revived `TokenDeviceUtils.getTokenV2`）。
      * 不绑定硬编码旧版 APP_CODE，天然兼容 16.6.4 (2609291) 评论区协议头。
      */
-    fun getAppTokenV2(nowSec: Long = System.currentTimeMillis() / 1000L): String {
+    fun getAppTokenV2(
+        nowSec: Long = System.currentTimeMillis() / 1000L,
+        overrideDeviceCode: String = this.deviceCode
+    ): String {
         val timestamp = nowSec.toString()
         val base64Timestamp = base64Raw(timestamp)
         val md5Timestamp = md5Hex(timestamp)
-        val md5DeviceCode = md5Hex(deviceCode)
+        val md5DeviceCode = md5Hex(overrideDeviceCode)
 
         val token = "$APP_LABEL_V2?$md5Timestamp\$$md5DeviceCode&$APP_ID"
         val base64Token = base64Raw(token)

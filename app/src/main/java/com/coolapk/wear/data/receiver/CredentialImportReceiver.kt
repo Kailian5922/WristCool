@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import com.coolapk.wear.WristCoolApplication
+import com.coolapk.wear.data.api.DeviceProfile
 import com.coolapk.wear.data.repository.AuthRepository
 
 class CredentialImportReceiver : BroadcastReceiver() {
@@ -13,12 +14,18 @@ class CredentialImportReceiver : BroadcastReceiver() {
             val payload = intent.getStringExtra(EXTRA_PAYLOAD).orEmpty()
             if (payload.isNotBlank()) {
                 val app = context.applicationContext as? WristCoolApplication
-                val repository = app?.container?.authRepository ?: AuthRepository(context.applicationContext)
+                val repository = app?.container?.authRepository
+                    ?: AuthRepository(context.applicationContext, DeviceProfile(context.applicationContext))
                 val result = repository.importCompanionPayload(payload)
                 result.onSuccess {
                     Toast.makeText(context, "酷安 Wear: 登录凭据导入成功", Toast.LENGTH_SHORT).show()
                 }.onFailure {
-                    Toast.makeText(context, "酷安 Wear: 导入失败 ${it.message}", Toast.LENGTH_SHORT).show()
+                    val deviceOnly = repository.importDeviceIdOnly(payload)
+                    if (deviceOnly.isSuccess) {
+                        Toast.makeText(context, "酷安 Wear: 数盟设备 ID 导入成功", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "酷安 Wear: 导入失败 ${it.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }

@@ -24,7 +24,7 @@ class AppContainer(context: Context) {
 
     val okHttpClient: OkHttpClient by lazy { CoolapkApi.defaultOkHttpClient() }
 
-    val authRepository: AuthRepository by lazy { AuthRepository(appContext) }
+    val authRepository: AuthRepository by lazy { AuthRepository(appContext, deviceProfile) }
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
 

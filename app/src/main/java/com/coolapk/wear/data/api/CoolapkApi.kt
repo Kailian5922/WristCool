@@ -214,8 +214,8 @@ class CoolapkApi(
 
         val deviceCode = deviceCodeProvider()
         val credentials = credentialsProvider()
-        // 对齐 c001apk-Revived AddCookiesInterceptor：全接口统一使用 Token V2，与 16.6.4 评论区协议头完全一致
-        val token = auth.getAppTokenV2()
+        // 对齐 c001apk-Revived AddCookiesInterceptor：全接口统一使用 Token V2，并实时跟随最新 deviceCode
+        val token = auth.getAppTokenV2(overrideDeviceCode = deviceCode)
 
         val builder = Request.Builder()
             .url(urlBuilder.build())

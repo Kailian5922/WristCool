@@ -128,7 +128,7 @@ fun MeScreen(
                 ) {
                     if (manualInputText.isEmpty()) {
                         Text(
-                            text = "点击此处唤起输入法粘贴 Cookie",
+                            text = "点击粘贴伴侣凭据、Cookie 或数盟设备 ID (DU...)",
                             color = colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodyExtraSmall
                         )
@@ -402,7 +402,16 @@ fun MeScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                         },
-                        secondaryLabel = { Text(if (uiState.credentials.isLoggedIn) "已登录" else "从剪贴板读取", maxLines = 1) },
+                        secondaryLabel = {
+                            val hasDeviceId = uiState.credentials.deviceId.isNotBlank()
+                            val subtitle = when {
+                                uiState.credentials.isLoggedIn && hasDeviceId -> "已登录 · 设备ID已配置"
+                                uiState.credentials.isLoggedIn -> "已登录 · 未配置设备ID"
+                                hasDeviceId -> "设备ID已配置 · 待导入登录"
+                                else -> "读取剪贴板凭据或设备ID"
+                            }
+                            Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
                         transformation = SurfaceTransformation(transformationSpec),
                         modifier = Modifier
                             .fillMaxWidth()

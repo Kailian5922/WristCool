@@ -1,6 +1,7 @@
 package com.coolapk.wear.data.repository
 
 import android.content.Context
+import com.coolapk.wear.data.api.DeviceProfile
 import com.coolapk.wear.data.model.AuthCredentials
 import com.coolapk.wear.data.model.FeedMemoryCache
 import com.coolapk.wear.data.util.CookieParser
@@ -10,7 +11,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 
-class AuthRepository(context: Context) {
+class AuthRepository(
+    context: Context,
+    private val deviceProfile: DeviceProfile? = null
+) {
 
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -24,30 +28,54 @@ class AuthRepository(context: Context) {
         val uid = storedUid.ifBlank { CookieParser.extractValue(cookie, "uid") }
         val username = prefs.getString(KEY_USERNAME, "").orEmpty()
         val avatar = prefs.getString(KEY_AVATAR, "").orEmpty()
-        return AuthCredentials(cookie, ddid, uid, username, avatar)
+        val deviceId = deviceProfile?.customDeviceId?.takeIf { it.isNotBlank() }
+            ?: prefs.getString(KEY_DEVICE_ID, "").orEmpty()
+        return AuthCredentials(cookie, ddid, uid, username, avatar, deviceId)
     }
 
     @Synchronized
     fun saveCredentials(credentials: AuthCredentials) {
+        val effectiveDeviceId = credentials.deviceId.takeIf { it.isNotBlank() }
+            ?: deviceProfile?.customDeviceId.orEmpty()
+        if (effectiveDeviceId.isNotBlank()) {
+            deviceProfile?.setCustomDeviceId(effectiveDeviceId)
+        }
+        val persisted = credentials.copy(deviceId = effectiveDeviceId)
         prefs.edit()
-            .putString(KEY_COOKIE, credentials.cookie)
-            .putString(KEY_DDID, credentials.ddid)
-            .putString(KEY_UID, credentials.uid)
-            .putString(KEY_USERNAME, credentials.username)
-            .putString(KEY_AVATAR, credentials.avatar)
+            .putString(KEY_COOKIE, persisted.cookie)
+            .putString(KEY_DDID, persisted.ddid)
+            .putString(KEY_UID, persisted.uid)
+            .putString(KEY_USERNAME, persisted.username)
+            .putString(KEY_AVATAR, persisted.avatar)
+            .putString(KEY_DEVICE_ID, persisted.deviceId)
             .apply()
-        _credentials.value = credentials
+        _credentials.value = persisted
     }
 
     /**
      * 导入伴侣端导出的登录信息。
-     * 支持手机端复制的 JSON 字符串 `{"cookie":"...", "ddid":"..."}`，
+     * 支持手机端复制的 JSON 字符串 `{"cookie":"...", "ddid":"...", "deviceId":"DU..."}`，
      * 同时也兼容直接粘贴纯 Cookie 字符串。
      */
     fun importCompanionPayload(rawText: String): Result<AuthCredentials> {
         return parseCompanionPayload(rawText).onSuccess { credentials ->
             saveCredentials(credentials)
         }
+    }
+
+    /**
+     * 仅导入/更新数盟设备 ID（不清空已有登录态），支持直接粘贴官方酷安复制的设备日志或 DU... 字符串。
+     */
+    @Synchronized
+    fun importDeviceIdOnly(rawText: String): Result<String> {
+        val parsed = DeviceProfile.parseShuzilmDeviceId(rawText)
+        if (parsed.isEmpty()) {
+            return Result.failure(IllegalArgumentException("未识别到有效的数盟设备 ID（应形如 DU...）"))
+        }
+        deviceProfile?.setCustomDeviceId(parsed)
+        prefs.edit().putString(KEY_DEVICE_ID, parsed).apply()
+        _credentials.value = _credentials.value.copy(deviceId = parsed)
+        return Result.success(parsed)
     }
 
     @Synchronized
@@ -66,9 +94,14 @@ class AuthRepository(context: Context) {
 
     @Synchronized
     fun logout() {
+        val preservedDeviceId = deviceProfile?.customDeviceId?.takeIf { it.isNotBlank() }
+            ?: _credentials.value.deviceId
         prefs.edit().clear().apply()
+        if (preservedDeviceId.isNotBlank()) {
+            prefs.edit().putString(KEY_DEVICE_ID, preservedDeviceId).apply()
+        }
         FeedMemoryCache.clear()
-        _credentials.value = AuthCredentials()
+        _credentials.value = AuthCredentials(deviceId = preservedDeviceId)
     }
 
     companion object {
@@ -78,6 +111,7 @@ class AuthRepository(context: Context) {
         private const val KEY_UID = "uid"
         private const val KEY_USERNAME = "username"
         private const val KEY_AVATAR = "avatar"
+        private const val KEY_DEVICE_ID = "device_id"
 
         /**
          * 纯解析函数（便于 JVM 单元测试）。
@@ -91,10 +125,15 @@ class AuthRepository(context: Context) {
 
                 var rawCookie = ""
                 var ddid = ""
+                var deviceId = ""
                 if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
                     val json = JSONObject(trimmed)
                     rawCookie = json.optString("cookie", "")
                     ddid = json.optString("ddid", "").trim()
+                    val rawDeviceId = json.optString("deviceId", "")
+                        .ifBlank { json.optString("szlmId", "") }
+                        .ifBlank { json.optString("device_id", "") }
+                    deviceId = DeviceProfile.parseShuzilmDeviceId(rawDeviceId)
                 } else {
                     rawCookie = trimmed
                 }
@@ -110,7 +149,8 @@ class AuthRepository(context: Context) {
                     ddid = ddid,
                     uid = uid,
                     username = if (uid.isNotEmpty()) "UID: $uid" else "已登录用户",
-                    avatar = ""
+                    avatar = "",
+                    deviceId = deviceId
                 )
                 Result.success(updated)
             } catch (e: Exception) {

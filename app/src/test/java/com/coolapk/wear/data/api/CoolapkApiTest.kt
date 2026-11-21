@@ -439,4 +439,34 @@ class CoolapkApiTest {
         assertTrue(digitalBlocked.exceptionOrNull() is CoolapkCaptchaRequiredException)
         assertEquals(countBefore + 1, server.requestCount)
     }
+
+    @Test
+    fun `CoolapkApi dynamically signs X-App-Token with updated X-App-Device at runtime`() = runTest {
+        var currentDeviceCode = DeviceProfile.generateOfficialDeviceCode("DUFirstDeviceId1234567890abcdef")
+        val dynamicApi = CoolapkApi(
+            deviceCodeProvider = { currentDeviceCode },
+            userAgent = "Dalvik/2.1.0 +CoolMarket/16.2.0-2604201-universal",
+            credentialsProvider = { AuthCredentials(cookie = "uid=42; token=abc123", uid = "42") },
+            baseUrl = server.url("/").toString()
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[]}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[]}"""))
+
+        assertTrue(dynamicApi.getFeedReplies("5001", page = 1).isSuccess)
+        val req1 = server.takeRequest()
+        val firstCode = req1.getHeader("X-App-Device").orEmpty()
+        val firstToken = req1.getHeader("X-App-Token").orEmpty()
+
+        currentDeviceCode = DeviceProfile.generateOfficialDeviceCode("DUSecondDeviceId9876543210fedcba")
+        assertTrue(dynamicApi.getFeedReplies("5001", page = 1).isSuccess)
+        val req2 = server.takeRequest()
+        val secondCode = req2.getHeader("X-App-Device").orEmpty()
+        val secondToken = req2.getHeader("X-App-Token").orEmpty()
+
+        assertTrue(firstCode != secondCode)
+        assertEquals(currentDeviceCode, secondCode)
+        assertTrue(firstToken.startsWith("v2"))
+        assertTrue(secondToken.startsWith("v2"))
+        assertTrue(firstToken != secondToken)
+    }
 }
