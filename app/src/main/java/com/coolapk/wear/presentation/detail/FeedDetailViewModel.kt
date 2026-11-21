@@ -130,11 +130,13 @@ class FeedDetailViewModel(
             val sortKey = _uiState.value.commentSort.key
 
             if (hasCachedFeed) {
+                val cachedFeedType = _uiState.value.feed?.feedType.orEmpty().ifBlank { "feed" }
                 // 已有列表缓存正文时，优先顺序拉取评论区，避免与 /v6/feed/detail 同毫秒并发抢占连接或加重风控
                 val commentsResult = api.getFeedReplies(
                     feedId = feedId,
                     page = 1,
-                    sortType = sortKey
+                    sortType = sortKey,
+                    feedType = cachedFeedType
                 )
                 val commentFailure = commentsResult.exceptionOrNull()
                 val commentsCaptcha = (commentFailure as? CoolapkCaptchaRequiredException)?.challenge
@@ -212,7 +214,8 @@ class FeedDetailViewModel(
                     val commentsResult = api.getFeedReplies(
                         feedId = feedId,
                         page = 1,
-                        sortType = sortKey
+                        sortType = sortKey,
+                        feedType = item.feedType.ifBlank { "feed" }
                     )
                     val commentFailure = commentsResult.exceptionOrNull()
                     val commentsCaptcha = (commentFailure as? CoolapkCaptchaRequiredException)?.challenge
@@ -296,12 +299,14 @@ class FeedDetailViewModel(
                 _uiState.update { it.copy(isLoadingMoreComments = true) }
             }
 
+            val currentFeedType = _uiState.value.feed?.feedType.orEmpty().ifBlank { "feed" }
             val result = api.getFeedReplies(
                 feedId = feedId,
                 page = page,
                 sortType = sort.key,
                 firstItem = firstItem,
-                lastItem = lastItem
+                lastItem = lastItem,
+                feedType = currentFeedType
             )
             if (_uiState.value.commentSort != sort) return@launch
 

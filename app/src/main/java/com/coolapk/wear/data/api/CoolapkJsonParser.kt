@@ -1389,7 +1389,7 @@ object CoolapkJsonParser {
         }
     }
 
-    private val FEED_URL_ID_REGEX = Regex("""(?:^|[/?#])feed/(\d+)""", RegexOption.IGNORE_CASE)
+    private val FEED_URL_ID_REGEX = Regex("""(?:^|[/?#])(?:feed|picture)/(\d+)""", RegexOption.IGNORE_CASE)
     private val REPLY_URL_ID_REGEX = Regex("""(?:/feed/reply/|/reply/)(\d+)""", RegexOption.IGNORE_CASE)
     private val REPLY_QUERY_ID_REGEX = Regex("""[?&#](?:replyId|reply_id|rid)=(\d+)""", RegexOption.IGNORE_CASE)
     private val NON_FEED_TARGET_REGEX = Regex("""product|device|apk|app|game|goods|user|topic|dyh|album|reply|comment""")

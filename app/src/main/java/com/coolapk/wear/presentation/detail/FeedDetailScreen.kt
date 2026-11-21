@@ -207,7 +207,14 @@ fun FeedDetailScreen(
                                     .padding(horizontal = 12.dp, vertical = 12.dp)
                             ) {
                                 Text(
-                                    text = detailChallenge.message,
+                                    text = buildString {
+                                        append(detailChallenge.message)
+                                        if (detailChallenge.messageStatus.isNotBlank()) {
+                                            append(" (")
+                                            append(detailChallenge.messageStatus)
+                                            append(")")
+                                        }
+                                    },
                                     color = colorScheme.onSurface,
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
@@ -792,7 +799,15 @@ fun FeedDetailScreen(
                                         .padding(horizontal = 12.dp, vertical = 10.dp)
                                 ) {
                                     Text(
-                                        text = "评论区：${commentChallenge.message}",
+                                        text = buildString {
+                                            append("评论区：")
+                                            append(commentChallenge.message)
+                                            if (commentChallenge.messageStatus.isNotBlank()) {
+                                                append(" (")
+                                                append(commentChallenge.messageStatus)
+                                                append(")")
+                                            }
+                                        },
                                         color = colorScheme.onSurface,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,

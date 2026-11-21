@@ -13,6 +13,7 @@ class CoolapkAuth(@Volatile private var deviceCode: String) {
     companion object {
         private const val APP_ID = "com.coolapk.market"
         private const val APP_CODE = 2604201L
+        private const val APP_LABEL_V2 = "token://com.coolapk.market/dcf01e569c1e3db93a3d0fcf191a622c"
         private const val STD_BASE64_ALPHABET =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
@@ -35,6 +36,9 @@ class CoolapkAuth(@Volatile private var deviceCode: String) {
 
         private fun md5Hex(text: String): String = md5Hex(text.toByteArray(Charsets.UTF_8))
 
+        private fun base64Raw(text: String): String =
+            Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8)).replace("=", "")
+
         private fun shiftLastBase64Char(value: String, shift: Int): String {
             if (value.isEmpty()) return value
             val prefix = value.substring(0, value.length - 1)
@@ -48,6 +52,28 @@ class CoolapkAuth(@Volatile private var deviceCode: String) {
 
     fun setDeviceCode(code: String) {
         this.deviceCode = code
+    }
+
+    /**
+     * 酷安 Token V2 签名（严格对齐 c001apk-Revived `TokenDeviceUtils.getTokenV2`）。
+     * 不绑定硬编码旧版 APP_CODE，天然兼容 16.6.4 (2609291) 评论区协议头。
+     */
+    fun getAppTokenV2(nowSec: Long = System.currentTimeMillis() / 1000L): String {
+        val timestamp = nowSec.toString()
+        val base64Timestamp = base64Raw(timestamp)
+        val md5Timestamp = md5Hex(timestamp)
+        val md5DeviceCode = md5Hex(deviceCode)
+
+        val token = "$APP_LABEL_V2?$md5Timestamp\$$md5DeviceCode&$APP_ID"
+        val base64Token = base64Raw(token)
+        val md5Base64Token = md5Hex(base64Token)
+        val md5Token = md5Hex(token)
+
+        val rawSalt = "\$2a\$10\$$base64Timestamp/$md5Token"
+        val bcryptSalt = "${rawSalt.substring(0, minOf(31, rawSalt.length))}u"
+        val hash2a = BCrypt.hashpw(md5Base64Token, bcryptSalt)
+        val hash2y = "\$2y" + hash2a.substring(3)
+        return "v2${base64Raw(hash2y)}"
     }
 
     fun getAppToken(nowSec: Long = System.currentTimeMillis() / 1000L): String {

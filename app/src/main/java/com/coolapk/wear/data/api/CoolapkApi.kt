@@ -46,7 +46,8 @@ class CoolapkApi(
     private val credentialsProvider: () -> AuthCredentials,
     private val onUserInfoUpdated: (username: String, avatar: String, uid: String) -> Unit = { _, _, _ -> },
     private val okHttpClient: OkHttpClient = defaultOkHttpClient(),
-    private val baseUrl: String = BASE_URL
+    private val baseUrl: String = BASE_URL,
+    private val api2BaseUrl: String = if (baseUrl == BASE_URL) API2_BASE_URL else baseUrl
 ) {
     constructor(
         deviceProfile: DeviceProfile,
@@ -64,6 +65,14 @@ class CoolapkApi(
 
     companion object {
         const val BASE_URL = "https://api.coolapk.com"
+        const val API2_BASE_URL = "https://api2.coolapk.com"
+
+        // 对齐 c001apk-Revived FeedApiCompatibility：评论接口要求至少 16.6.4 (2609291) 协议头
+        private const val REPLY_VERSION_NAME = "16.6.4"
+        private const val REPLY_VERSION_CODE = "2609291"
+        private const val REPLY_API_VERSION = "16"
+        private val COOLMARKET_UA_REGEX = Regex("""\+CoolMarket/\S+""")
+
         private val HOT_FALLBACK_WORDS = listOf(
             "HyperOS", "OriginOS", "iOS", "手表", "玩机技巧", "摄影", "酷安", "折叠屏", "澎湃", "WearOS"
         )
@@ -104,6 +113,62 @@ class CoolapkApi(
             // 伴侣端旧版曾自动生成随机 UUID 作为占位 ddid，会导致酷安点赞接口触发风控报错，必须过滤
             return !FAKE_UUID_REGEX.matches(trimmed)
         }
+
+        internal fun encodeCookieUsername(rawUsername: String): String {
+            val trimmed = rawUsername.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("UID:") || trimmed == "已登录用户") return ""
+            return java.net.URLEncoder.encode(trimmed, "UTF-8").replace("+", "%20")
+        }
+
+        /**
+         * 构造干净的 API Cookie（严格对齐 c001apk-Revived AddCookiesInterceptor）：
+         * 仅发送 uid / username / token，剥离网页登录混入的 SESSID 与其他网页域 Cookie，
+         * 仅在服务端要求 DDI 的写接口附带有效 ddid。
+         */
+        internal fun buildApiCookie(credentials: AuthCredentials, needsDdid: Boolean): String {
+            val rawCookie = credentials.cookie
+            if (rawCookie.isBlank()) return ""
+            val uid = com.coolapk.wear.data.util.CookieParser.extractValue(rawCookie, "uid")
+                .ifBlank { credentials.uid.trim() }
+            val token = com.coolapk.wear.data.util.CookieParser.extractValue(rawCookie, "token")
+            val username = com.coolapk.wear.data.util.CookieParser.extractValue(rawCookie, "username")
+                .ifBlank { encodeCookieUsername(credentials.username) }
+            val sessId = com.coolapk.wear.data.util.CookieParser.extractValue(rawCookie, "SESSID")
+            val usableDdid = credentials.ddid.takeIf { isUsableShuzilmDdid(it) }
+                ?: com.coolapk.wear.data.util.CookieParser.extractValue(rawCookie, "ddid")
+                    .takeIf { isUsableShuzilmDdid(it) }
+
+            val parts = mutableListOf<String>()
+            if (uid.isNotBlank() && token.isNotBlank()) {
+                parts.add("uid=$uid")
+                if (username.isNotBlank()) {
+                    parts.add("username=$username")
+                }
+                parts.add("token=$token")
+            } else if (uid.isNotBlank() && sessId.isNotBlank()) {
+                parts.add("uid=$uid")
+                parts.add("SESSID=$sessId")
+            } else if (token.isNotBlank()) {
+                parts.add("token=$token")
+            } else {
+                val fallback = cookieWithoutDdid(rawCookie)
+                if (fallback.isNotBlank()) parts.add(fallback)
+            }
+
+            if (needsDdid && !usableDdid.isNullOrBlank()) {
+                parts.add("ddid=$usableDdid")
+            }
+            return parts.joinToString("; ")
+        }
+
+        internal fun upgradeReplyUserAgent(baseUserAgent: String): String {
+            val appAgent = "+CoolMarket/$REPLY_VERSION_NAME-$REPLY_VERSION_CODE-universal"
+            return if (COOLMARKET_UA_REGEX.containsMatchIn(baseUserAgent)) {
+                COOLMARKET_UA_REGEX.replace(baseUserAgent, appAgent)
+            } else {
+                "$baseUserAgent $appAgent".trim()
+            }
+        }
     }
 
     private val auth by lazy { CoolapkAuth(deviceCodeProvider()) }
@@ -125,8 +190,14 @@ class CoolapkApi(
     val currentUid: String
         get() = credentialsProvider().uid
 
-    internal fun buildRequest(path: String, queryParams: Map<String, String> = emptyMap()): Request.Builder {
-        val normalizedBase = baseUrl.trimEnd('/')
+    internal fun buildRequest(
+        path: String,
+        queryParams: Map<String, String> = emptyMap(),
+        useApi2Host: Boolean = false,
+        includeFormContentType: Boolean = true
+    ): Request.Builder {
+        val targetBase = if (useApi2Host) api2BaseUrl else baseUrl
+        val normalizedBase = targetBase.trimEnd('/')
         val urlBuilder = "$normalizedBase$path".toHttpUrlOrNull()?.newBuilder()
             ?: throw IllegalArgumentException("Invalid URL: $normalizedBase$path")
 
@@ -134,18 +205,26 @@ class CoolapkApi(
             urlBuilder.addQueryParameter(key, value)
         }
 
+        val cleanPath = path.substringBefore('?')
+        val isReplyListPath = cleanPath == "/v6/feed/replyList"
+        val effectiveVersionName = if (isReplyListPath) REPLY_VERSION_NAME else "16.2.0"
+        val effectiveVersionCode = if (isReplyListPath) REPLY_VERSION_CODE else "2604201"
+        val effectiveApiVersion = if (isReplyListPath) REPLY_API_VERSION else "16"
+        val effectiveUserAgent = if (isReplyListPath) upgradeReplyUserAgent(userAgent) else userAgent
+
         val deviceCode = deviceCodeProvider()
         val credentials = credentialsProvider()
-        val token = auth.getAppToken()
+        // 对齐 c001apk-Revived AddCookiesInterceptor：全接口统一使用 Token V2，与 16.6.4 评论区协议头完全一致
+        val token = auth.getAppTokenV2()
 
         val builder = Request.Builder()
             .url(urlBuilder.build())
-            .header("User-Agent", userAgent)
+            .header("User-Agent", effectiveUserAgent)
             .header("X-App-Id", "com.coolapk.market")
-            .header("X-App-Version", "16.2.0")
-            .header("X-App-Code", "2604201")
-            .header("X-App-Supported", "2604201")
-            .header("X-Api-Version", "16")
+            .header("X-App-Version", effectiveVersionName)
+            .header("X-App-Code", effectiveVersionCode)
+            .header("X-App-Supported", effectiveVersionCode)
+            .header("X-Api-Version", effectiveApiVersion)
             .header("X-App-Mode", "universal")
             .header("X-App-Channel", "coolapk")
             .header("X-Sdk-Int", "34")
@@ -155,16 +234,13 @@ class CoolapkApi(
             .header("X-Requested-With", "XMLHttpRequest")
             .header("X-Dark-Mode", "1")
 
+        if (includeFormContentType) {
+            builder.header("Content-Type", "application/x-www-form-urlencoded")
+        }
+
         if (credentials.isLoggedIn) {
-            val cleanPath = path.substringBefore('?')
             val needsDdid = DDI_EVENT_PATHS.any { cleanPath == it }
-            var cookie = cookieWithoutDdid(credentials.cookie)
-            val usableDdid = credentials.ddid.takeIf { isUsableShuzilmDdid(it) }
-                ?: com.coolapk.wear.data.util.CookieParser.extractValue(credentials.cookie, "ddid")
-                    .takeIf { isUsableShuzilmDdid(it) }
-            if (needsDdid && !usableDdid.isNullOrBlank()) {
-                cookie = if (cookie.isBlank()) "ddid=$usableDdid" else "$cookie; ddid=$usableDdid"
-            }
+            val cookie = buildApiCookie(credentials, needsDdid)
             if (cookie.isNotBlank()) {
                 builder.header("Cookie", cookie)
             }
@@ -175,10 +251,11 @@ class CoolapkApi(
 
     private suspend fun executeGet(
         path: String,
-        queryParams: Map<String, String> = emptyMap()
+        queryParams: Map<String, String> = emptyMap(),
+        useApi2Host: Boolean = false
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val req = buildRequest(path, queryParams).build()
+            val req = buildRequest(path, queryParams, useApi2Host = useApi2Host).build()
             okHttpClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 CoolapkJsonParser.parseCaptchaChallenge(body, response.code)?.let { challenge ->
@@ -243,7 +320,7 @@ class CoolapkApi(
             for ((k, v) in parts) {
                 bodyBuilder.addFormDataPart(k, v)
             }
-            val req = buildRequest(path, queryParams).post(bodyBuilder.build()).build()
+            val req = buildRequest(path, queryParams, includeFormContentType = false).post(bodyBuilder.build()).build()
             okHttpClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 CoolapkJsonParser.parseCaptchaChallenge(body, response.code)?.let { challenge ->
@@ -481,16 +558,18 @@ class CoolapkApi(
     }
 
     /**
-     * 获取动态一级评论（严格对齐酷安官方 APK ReplyListV13 / coolapk-desktop 参数规范）：
-     * - 默认排序传 `listType=lastupdate_desc`，仅楼主筛选时省略 `listType` 并传 `fromFeedAuthor=1`；
-     * - 完整附带 `discussMode=1`、`feedType=feed`、`blockStatus=0`、`fromFeedAuthor` 及翻页游标 `firstItem`/`lastItem`。
+     * 获取动态一级评论（严格对齐 c001apk-Revived `NetworkRepo.getFeedContentReply` 与 `FeedApiCompatibility`）：
+     * - 走 `https://api2.coolapk.com/v6/feed/replyList`，请求头自动升级至 16.6.4 (2609291) + Token V2；
+     * - 默认排序传 `listType=lastupdate_desc`，仅楼主筛选时传 `listType=` + `fromFeedAuthor=1`；
+     * - 完整附带 `discussMode=1`、动态真实 `feedType`、`blockStatus=0`、`fromFeedAuthor` 及翻页游标 `firstItem`/`lastItem`。
      */
     suspend fun getFeedReplies(
         feedId: String,
         page: Int,
         sortType: String = "",
         firstItem: String = "",
-        lastItem: String = ""
+        lastItem: String = "",
+        feedType: String = "feed"
     ): Result<List<CommentItem>> {
         val isAuthorOnly = sortType == "author"
         val effectiveListType = when {
@@ -498,11 +577,12 @@ class CoolapkApi(
             sortType.isBlank() -> "lastupdate_desc"
             else -> sortType.trim()
         }
-        val params = linkedMapOf("id" to feedId)
-        if (effectiveListType.isNotEmpty()) {
-            params["listType"] = effectiveListType
-        }
-        params["page"] = page.toString()
+        val effectiveFeedType = feedType.trim().ifBlank { "feed" }
+        val params = linkedMapOf(
+            "id" to feedId,
+            "listType" to effectiveListType,
+            "page" to page.toString()
+        )
         if (firstItem.isNotBlank()) {
             params["firstItem"] = firstItem.trim()
         }
@@ -510,10 +590,10 @@ class CoolapkApi(
             params["lastItem"] = lastItem.trim()
         }
         params["discussMode"] = "1"
-        params["feedType"] = "feed"
+        params["feedType"] = effectiveFeedType
         params["blockStatus"] = "0"
         params["fromFeedAuthor"] = if (isAuthorOnly) "1" else "0"
-        return executeGet("/v6/feed/replyList", params).mapCatching { body ->
+        return executeGet("/v6/feed/replyList", params, useApi2Host = true).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             CoolapkJsonParser.parseCommentList(body)
         }
@@ -536,7 +616,7 @@ class CoolapkApi(
         if (lastItem.isNotBlank()) {
             params["lastItem"] = lastItem.trim()
         }
-        return executeGet("/v6/feed/replyList", params).mapCatching { body ->
+        return executeGet("/v6/feed/replyList", params, useApi2Host = true).mapCatching { body ->
             CoolapkJsonParser.parseApiError(body)?.let { throw IOException(it) }
             CoolapkJsonParser.parseSubReplyList(body)
         }

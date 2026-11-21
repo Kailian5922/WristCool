@@ -53,7 +53,7 @@ class CoolapkApiTest {
         assertEquals("POST", req1.method)
         assertEquals("/v6/feed/like?id=1001&detail=0", req1.path)
         assertEquals("trace=", req1.body.readUtf8())
-        assertTrue(req1.getHeader("X-App-Token").orEmpty().startsWith("v3"))
+        assertTrue(req1.getHeader("X-App-Token").orEmpty().startsWith("v2"))
         assertTrue(req1.getHeader("Cookie").orEmpty().contains("ddid=ddid-999"))
 
         val unlikeResult = api.toggleLike("1001", like = false)
@@ -348,17 +348,69 @@ class CoolapkApiTest {
             server.takeRequest().path
         )
 
-        assertTrue(api.getFeedReplies(feedId = "12345", page = 1, sortType = "author").isSuccess)
+        assertTrue(api.getFeedReplies(feedId = "12345", page = 1, sortType = "author", feedType = "feedArticle").isSuccess)
+        val authorReq = server.takeRequest()
         assertEquals(
-            "/v6/feed/replyList?id=12345&page=1&discussMode=1&feedType=feed&blockStatus=0&fromFeedAuthor=1",
-            server.takeRequest().path
+            "/v6/feed/replyList?id=12345&listType=&page=1&discussMode=1&feedType=feedArticle&blockStatus=0&fromFeedAuthor=1",
+            authorReq.path
         )
+        assertEquals("16.6.4", authorReq.getHeader("X-App-Version"))
+        assertEquals("2609291", authorReq.getHeader("X-App-Code"))
+        assertEquals("2609291", authorReq.getHeader("X-App-Supported"))
+        assertEquals("16", authorReq.getHeader("X-Api-Version"))
+        assertEquals("application/x-www-form-urlencoded", authorReq.getHeader("Content-Type"))
+        assertTrue(authorReq.getHeader("User-Agent").orEmpty().contains("+CoolMarket/16.6.4-2609291-universal"))
+        assertTrue(authorReq.getHeader("X-App-Token").orEmpty().startsWith("v2"))
 
         assertTrue(api.getCommentSubReplies(commentId = "c1", page = 2, lastItem = "sub1").isSuccess)
+        val subReq = server.takeRequest()
         assertEquals(
             "/v6/feed/replyList?id=c1&listType=&page=2&discussMode=0&feedType=feed_reply&blockStatus=0&fromFeedAuthor=0&lastItem=sub1",
-            server.takeRequest().path
+            subReq.path
         )
+        assertEquals("16.6.4", subReq.getHeader("X-App-Version"))
+        assertEquals("2609291", subReq.getHeader("X-App-Code"))
+    }
+
+    @Test
+    fun `replyList routes to api2 host and strips web SESSID cookies matching c001apk-Revived`() = runTest {
+        val api2Server = MockWebServer()
+        api2Server.start()
+        try {
+            val splitApi = CoolapkApi(
+                deviceCodeProvider = { "test-device-code" },
+                userAgent = "Dalvik/2.1.0 (Linux; U; Android 14; 23113RKC6C Build/UKQ1.230804.001) +CoolMarket/16.2.0-2604201-universal",
+                credentialsProvider = {
+                    AuthCredentials(
+                        cookie = "SESSID=web-sess-123; forward=https://www.coolapk.com; uid=42; username=%E9%85%B7%E5%8F%8B; token=abc123; displayVersion=v14",
+                        uid = "42",
+                        username = "酷友"
+                    )
+                },
+                baseUrl = server.url("/").toString(),
+                api2BaseUrl = api2Server.url("/").toString()
+            )
+            server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"5001","uid":"1","username":"Author","message":"正文"}}"""))
+            api2Server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"id":"c1","uid":"2","username":"U2","message":"评论正常"}]}"""))
+
+            assertTrue(splitApi.getFeedDetail("5001").isSuccess)
+            val detailReq = server.takeRequest()
+            assertEquals("16.2.0", detailReq.getHeader("X-App-Version"))
+            assertEquals("2604201", detailReq.getHeader("X-App-Code"))
+            assertEquals("uid=42; username=%E9%85%B7%E5%8F%8B; token=abc123", detailReq.getHeader("Cookie"))
+            assertTrue(detailReq.getHeader("User-Agent").orEmpty().endsWith("+CoolMarket/16.2.0-2604201-universal"))
+
+            assertTrue(splitApi.getFeedReplies("5001", page = 1).isSuccess)
+            val replyReq = api2Server.takeRequest()
+            assertEquals("16.6.4", replyReq.getHeader("X-App-Version"))
+            assertEquals("2609291", replyReq.getHeader("X-App-Code"))
+            assertEquals("2609291", replyReq.getHeader("X-App-Supported"))
+            assertEquals("uid=42; username=%E9%85%B7%E5%8F%8B; token=abc123", replyReq.getHeader("Cookie"))
+            assertTrue(replyReq.getHeader("User-Agent").orEmpty().endsWith("+CoolMarket/16.6.4-2609291-universal"))
+            assertTrue(replyReq.getHeader("X-App-Token").orEmpty().startsWith("v2"))
+        } finally {
+            api2Server.shutdown()
+        }
     }
 
     @Test
