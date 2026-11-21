@@ -25,11 +25,13 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.ThumbUpOffAlt
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -52,6 +54,7 @@ import coil.request.ImageRequest
 import coil.size.Precision
 import com.coolapk.wear.data.model.CommentItem
 import com.coolapk.wear.data.model.SubReplyItem
+import com.coolapk.wear.data.util.TextSanitizer
 import com.coolapk.wear.presentation.theme.LocalWatchSettings
 
 /**
@@ -463,8 +466,8 @@ fun CommentCard(
 
 /**
  * 评论区 / 楼中楼配图预览组件：
- * - 正常模式（noImageMode == false）：加载轻量小方块缩略图（限制解码尺寸且 GIF 仅解首帧，节省手表内存与流量），点击后进入全屏完整加载原图/动图；
- * - 无图省流模式（noImageMode == true）：不预载预览图，仅保留点击查看入口按钮。
+ * - 动图 GIF 与无图省流模式：不预载原动图，统一渲染轻量点击查看按钮，避免进入评论区时并发下载大体积动图；
+ * - 静态配图：优先拉取酷安官方 `.s.jpg` 真缩略图并限制解码尺寸，点击后进入全屏查看完整原图。
  */
 @Composable
 private fun CommentImagePreview(
@@ -475,15 +478,15 @@ private fun CommentImagePreview(
     onClick: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val isGif = remember(imageUrl) { imageUrl.contains(".gif", ignoreCase = true) }
+    val isGif = remember(imageUrl) { TextSanitizer.isGifImageUrl(imageUrl) }
 
-    if (noImageMode) {
+    if (noImageMode || isGif) {
         CompactButton(
             onClick = onClick,
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Image,
-                    contentDescription = "图片",
+                    contentDescription = if (isGif) "动图" else "图片",
                     modifier = Modifier.size(13.dp)
                 )
             },
@@ -504,9 +507,12 @@ private fun CommentImagePreview(
     }
 
     val context = LocalContext.current
-    val thumbRequest = remember(imageUrl, context) {
+    val thumbUrl = remember(imageUrl) { TextSanitizer.toCoolapkThumbnailUrl(imageUrl) }
+    var useOriginalFallback by remember(imageUrl) { mutableStateOf(false) }
+    val activeUrl = if (useOriginalFallback) imageUrl else thumbUrl
+    val thumbRequest = remember(activeUrl, context) {
         ImageRequest.Builder(context)
-            .data(imageUrl)
+            .data(activeUrl)
             .size(160, 160)
             .precision(Precision.INEXACT)
             .decoderFactory(BitmapFactoryDecoder.Factory())
@@ -525,26 +531,14 @@ private fun CommentImagePreview(
     ) {
         AsyncImage(
             model = thumbRequest,
-            contentDescription = if (isGif) "动图预览，点击查看完整动图" else "评论配图预览，点击查看原图",
+            contentDescription = "评论配图预览，点击查看原图",
             contentScale = ContentScale.Crop,
+            onError = {
+                if (!useOriginalFallback && thumbUrl != imageUrl) {
+                    useOriginalFallback = true
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
-        if (isGif) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(3.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color.Black.copy(alpha = 0.72f))
-                    .padding(horizontal = 3.dp, vertical = 1.dp)
-            ) {
-                Text(
-                    text = "GIF",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
     }
 }

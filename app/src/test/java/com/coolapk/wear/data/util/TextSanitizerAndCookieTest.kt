@@ -29,6 +29,44 @@ class TextSanitizerAndCookieTest {
     }
 
     @Test
+    fun `toCoolapkThumbnailUrl appends s jpg only for static Coolapk image CDN urls and detects GIFs`() {
+        assertTrue(TextSanitizer.isGifImageUrl("https://image.coolapk.com/feed/a.gif"))
+        assertTrue(TextSanitizer.isGifImageUrl("https://image.coolapk.com/feed/a.GIF?t=1"))
+        assertFalse(TextSanitizer.isGifImageUrl("https://image.coolapk.com/feed/a.jpg"))
+
+        assertEquals(
+            "https://image.coolapk.com/feed/2026/01/a.jpg.s.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("http://image.coolapk.com/feed/2026/01/a.jpg")
+        )
+        assertEquals(
+            "https://pic.coolapk.com/feed/2026/01/b.png.s.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://pic.coolapk.com/feed/2026/01/b.png")
+        )
+        // 已有缩略图后缀不重复拼接
+        assertEquals(
+            "https://image.coolapk.com/feed/a.jpg.s.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://image.coolapk.com/feed/a.jpg.s.jpg")
+        )
+        // GIF、头像域、带查询参数 URL、非酷安图床保持原样
+        assertEquals(
+            "https://image.coolapk.com/feed/anim.gif",
+            TextSanitizer.toCoolapkThumbnailUrl("https://image.coolapk.com/feed/anim.gif")
+        )
+        assertEquals(
+            "https://avatar.coolapk.com/data/000/1_avatar_middle.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://avatar.coolapk.com/data/000/1_avatar_middle.jpg")
+        )
+        assertEquals(
+            "https://image.coolapk.com/feed/signed.jpg?sign=abc",
+            TextSanitizer.toCoolapkThumbnailUrl("https://image.coolapk.com/feed/signed.jpg?sign=abc")
+        )
+        assertEquals(
+            "https://example.com/photo.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://example.com/photo.jpg")
+        )
+    }
+
+    @Test
     fun `filterAutoTitle removes placeholder titles and preserves real titles`() {
         assertEquals("", TextSanitizer.filterAutoTitle("张三的动态", "张三"))
         assertEquals("", TextSanitizer.filterAutoTitle("动态", "张三"))

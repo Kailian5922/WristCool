@@ -24,7 +24,10 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -348,9 +351,12 @@ fun FeedCard(
                 ) {
                     val previewPics = feed.picArr.take(3)
                     previewPics.forEach { picUrl ->
-                        val thumbRequest = remember(picUrl, thumbContext) {
+                        val thumbUrl = remember(picUrl) { TextSanitizer.toCoolapkThumbnailUrl(picUrl) }
+                        var useOriginalFallback by remember(picUrl) { mutableStateOf(false) }
+                        val activeUrl = if (useOriginalFallback) picUrl else thumbUrl
+                        val thumbRequest = remember(activeUrl, thumbContext) {
                             ImageRequest.Builder(thumbContext)
-                                .data(picUrl)
+                                .data(activeUrl)
                                 .size(144, 144)
                                 .precision(Precision.INEXACT)
                                 .decoderFactory(BitmapFactoryDecoder.Factory())
@@ -361,6 +367,11 @@ fun FeedCard(
                             model = thumbRequest,
                             contentDescription = "图片",
                             contentScale = ContentScale.Crop,
+                            onError = {
+                                if (!useOriginalFallback && thumbUrl != picUrl) {
+                                    useOriginalFallback = true
+                                }
+                            },
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(RoundedCornerShape(10.dp))

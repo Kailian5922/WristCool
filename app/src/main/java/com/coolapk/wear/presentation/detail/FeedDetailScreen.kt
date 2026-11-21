@@ -351,10 +351,19 @@ fun FeedDetailScreen(
                                 "image" -> {
                                     if (!settings.noImageMode || forceShowImages) {
                                         Column(modifier = Modifier.fillMaxWidth()) {
+                                            val thumbUrl = remember(block.imageUrl) {
+                                                TextSanitizer.toCoolapkThumbnailUrl(block.imageUrl)
+                                            }
+                                            var useOriginalFallback by remember(block.imageUrl) { mutableStateOf(false) }
                                             AsyncImage(
-                                                model = block.imageUrl,
+                                                model = if (useOriginalFallback) block.imageUrl else thumbUrl,
                                                 contentDescription = block.text.ifBlank { "配图" },
                                                 contentScale = ContentScale.Crop,
+                                                onError = {
+                                                    if (!useOriginalFallback && thumbUrl != block.imageUrl) {
+                                                        useOriginalFallback = true
+                                                    }
+                                                },
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .heightIn(max = 150.dp)

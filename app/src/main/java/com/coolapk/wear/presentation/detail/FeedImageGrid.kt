@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
@@ -18,9 +22,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.coolapk.wear.data.util.TextSanitizer
 
 /**
  * 自适应紧凑多图网格：1 图自适应，2/4 图双列对称，3/5/6/7/8/9 图三列九宫格。
+ * 列表内优先使用酷安官方 `.s.jpg` 缩略图，点击后在全屏画廊加载完整原图。
  */
 @Composable
 fun FeedImageGrid(
@@ -40,10 +46,17 @@ fun FeedImageGrid(
         when (picArr.size) {
             1 -> {
                 val picUrl = picArr[0]
+                val thumbUrl = remember(picUrl) { TextSanitizer.toCoolapkThumbnailUrl(picUrl) }
+                var useOriginalFallback by remember(picUrl) { mutableStateOf(false) }
                 AsyncImage(
-                    model = picUrl,
+                    model = if (useOriginalFallback) picUrl else thumbUrl,
                     contentDescription = "配图",
                     contentScale = ContentScale.Crop,
+                    onError = {
+                        if (!useOriginalFallback && thumbUrl != picUrl) {
+                            useOriginalFallback = true
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 160.dp)
@@ -96,10 +109,17 @@ private fun GridImageRows(
                 val idx = r * columns + c
                 if (idx < picArr.size) {
                     val picUrl = picArr[idx]
+                    val thumbUrl = remember(picUrl) { TextSanitizer.toCoolapkThumbnailUrl(picUrl) }
+                    var useOriginalFallback by remember(picUrl) { mutableStateOf(false) }
                     AsyncImage(
-                        model = picUrl,
+                        model = if (useOriginalFallback) picUrl else thumbUrl,
                         contentDescription = "配图",
                         contentScale = ContentScale.Crop,
+                        onError = {
+                            if (!useOriginalFallback && thumbUrl != picUrl) {
+                                useOriginalFallback = true
+                            }
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .aspectRatio(1f)
