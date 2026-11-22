@@ -31,15 +31,15 @@
 
 > 截取自真实设备 **Samsung Galaxy Watch 6 (Wear OS / One UI Watch)**：
 
-| 首页动态广场（腕酷 · 头条） | 消息通知中心 | 个人中心资产列表 |
+| 首页动态广场（腕酷 · 头条） | 动态详情与评论区 | 消息通知中心 |
 | :---: | :---: | :---: |
-| <img src="docs/screenshots/01_m3_home_feeds.jpg" width="220" /> | <img src="docs/screenshots/02_m3_inbox_center.jpg" width="220" /> | <img src="docs/screenshots/03_m3_me_assets.jpg" width="220" /> |
-| M3 Expressive 顶部圆键 + 满宽 7 频道胶囊 + 三页主舞台 | 6 分栏通知聚合（私信 / 评论 / @我 / 赞我 / 粉丝），支持快捷删除 | 弧形自适应列表，统一收纳收藏、点赞、回复与云端/本地历史 |
+| <img src="docs/screenshots/01_m3_home_feeds.jpg" width="220" /> | <img src="docs/screenshots/06_m3_feed_detail.jpg" width="220" /> | <img src="docs/screenshots/02_m3_inbox_center.jpg" width="220" /> |
+| M3 Expressive 顶部圆键 + 满宽 7 频道胶囊 + 三页主舞台 | 话题胶囊 + 一体化胶囊操作栏 + 一键屏蔽 TA + 评论 4 维排序 | 6 分栏通知聚合（私信 / 评论 / @我 / 赞我 / 粉丝），支持快捷删除 |
 
-| 手表设置 · 省流与交互 | 手表设置 · 默认与屏蔽 |
-| :---: | :---: |
-| <img src="docs/screenshots/04_m3_settings_interaction.jpg" width="220" /> | <img src="docs/screenshots/05_m3_settings_filter.jpg" width="220" /> |
-| `SwitchButton` 一键控制无图省流、表圈震动反馈与本地历史 | 自定义默认启动频道、默认评论排序与 UID / 关键词屏蔽过滤 |
+| 个人中心资产列表 | 手表设置 · 省流与交互 | 手表设置 · 默认与屏蔽 |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/03_m3_me_assets.jpg" width="220" /> | <img src="docs/screenshots/04_m3_settings_interaction.jpg" width="220" /> | <img src="docs/screenshots/05_m3_settings_filter.jpg" width="220" /> |
+| 弧形自适应列表，统一收纳收藏、点赞、回复与云端/本地历史 | `SwitchButton` 一键控制无图省流、表圈震动反馈与本地历史 | 自定义默认启动频道、默认评论排序与 UID / 关键词屏蔽过滤 |
 
 ---
 
@@ -197,7 +197,7 @@ adb -s <手表IP>:<端口> install -r app/build/outputs/apk/release/app-release.
 在探索与开发 Wear OS 穿戴端交互的过程中，深深受益于开源社区先行者的研究与设计规范，特此致敬并鸣谢以下优秀的开源项目与技术成果：
 
 1. **[Google Horologist](https://github.com/google/horologist)**：提供了 Wear OS 圆形屏幕响应式布局、分页壳层、手势滚动与 Wear Compose Material 3 最佳实践参考。
-2. **[c001apk-Revived](https://github.com/Kailian5922/c001apk-Revived)** & **[coolapk-desktop](https://github.com/Kailian5922/coolapk-desktop)**：为酷安 v16 协议扩展（通知/私信/投票/长图文/转发/收藏单/数码产品/话题关注/数盟设备 ID 与评论路由等）提供了接口契约与功能实现参考。
+2. **[c001apk-Revived](https://github.com/frisk1127/c001apk-Revived)**（基于 [c001apk-compose](https://github.com/bggRGjQaUbCoE/c001apk-compose)）& **[coolapk-desktop](https://github.com/daimiaopeng/coolapk-desktop)**：为酷安 v16 协议扩展（通知/私信/投票/长图文/转发/收藏单/数码产品/话题关注/数盟设备 ID 与评论路由等）提供了接口契约与功能实现参考。
 3. **[Coolapk-UWP](https://github.com/Tangent-90/Coolapk-UWP)** & **[coolApkAPI](https://github.com/ZCKun/CoolApkWeb)**：致谢项目作者及贡献者在酷安 API 协议逆向、加密 Token 算法与数据结构梳理方面的早期探索。
 4. **[Coil (Coil-kt)](https://github.com/coil-kt/coil)**：轻量的 Kotlin 协程图片与 GIF 动图异步加载库，助力手表端极致节省内存。
 5. **[ZXing Core](https://github.com/zxing/zxing)**：为“在手机上查看”功能提供毫秒级、免网络的二维码位图本地生成能力。
