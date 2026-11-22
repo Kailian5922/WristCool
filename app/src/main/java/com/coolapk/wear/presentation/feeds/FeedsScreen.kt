@@ -16,7 +16,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,6 +80,7 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import coil.compose.AsyncImage
 import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.FeedCard
+import com.coolapk.wear.presentation.components.FullBleedHorizontalScrollRow
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.WearCenteredLoadingOverlay
@@ -393,67 +393,65 @@ fun FeedsScreen(
                                 }
                             }
                         }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        // 7 频道横向切换条（头条 / 推荐 / 热榜 / 关注 / 酷图 / 数码 / 二手）
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(tabScrollState),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            FeedTab.entries.forEach { tab ->
-                                val isSelected = uiState.currentTab == tab
-                                Box(
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isSelected) colorScheme.primary else colorScheme.surfaceContainerHigh
-                                        )
-                                        .clickable { viewModel.switchTab(tab) }
-                                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = tab.title,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) colorScheme.onPrimary else colorScheme.onSurface
+                // 7 频道横向切换条（头条 / 推荐 / 热榜 / 关注 / 酷图 / 数码 / 二手，铺满表盘左右边缘）
+                item(key = "home_tabs") {
+                    FullBleedHorizontalScrollRow(
+                        scrollState = tabScrollState,
+                        contentPadding = contentPadding,
+                        modifier = Modifier.padding(top = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        FeedTab.entries.forEach { tab ->
+                            val isSelected = uiState.currentTab == tab
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isSelected) colorScheme.primary else colorScheme.surfaceContainerHigh
                                     )
-                                }
+                                    .clickable { viewModel.switchTab(tab) }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = tab.title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) colorScheme.onPrimary else colorScheme.onSurface
+                                )
                             }
                         }
+                    }
+                }
 
-                        // 关注流二级分组筛选条
-                        if (uiState.currentTab == FeedTab.TIMELINE && uiState.isLoggedIn) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(followGroupScrollState),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                FollowGroup.entries.forEach { grp ->
-                                    val isSelected = uiState.followGroup == grp
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(
-                                                if (isSelected) colorScheme.secondaryContainer else colorScheme.surfaceContainerLow
-                                            )
-                                            .clickable { viewModel.switchFollowGroup(grp) }
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                    ) {
-                                        Text(
-                                            text = grp.label,
-                                            style = MaterialTheme.typography.bodyExtraSmall,
-                                            color = if (isSelected) colorScheme.onSecondaryContainer else colorScheme.onSurfaceVariant,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                // 关注流二级分组筛选条
+                if (uiState.currentTab == FeedTab.TIMELINE && uiState.isLoggedIn) {
+                    item(key = "home_follow_groups") {
+                        FullBleedHorizontalScrollRow(
+                            scrollState = followGroupScrollState,
+                            contentPadding = contentPadding,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            FollowGroup.entries.forEach { grp ->
+                                val isSelected = uiState.followGroup == grp
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) colorScheme.secondaryContainer else colorScheme.surfaceContainerLow
                                         )
-                                    }
+                                        .clickable { viewModel.switchFollowGroup(grp) }
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = grp.label,
+                                        style = MaterialTheme.typography.bodyExtraSmall,
+                                        color = if (isSelected) colorScheme.onSecondaryContainer else colorScheme.onSurfaceVariant,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
                                 }
                             }
                         }

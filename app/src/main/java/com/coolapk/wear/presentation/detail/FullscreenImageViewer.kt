@@ -1,5 +1,6 @@
 package com.coolapk.wear.presentation.detail
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -27,10 +28,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,14 +67,70 @@ import coil.compose.SubcomposeAsyncImageContent
 import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.RotaryDispatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
+ * 表冠/表圈旋转切图步进器（纯逻辑，适配高分辨率无级表冠与机械刻度表圈）：
+ * - 累积旋转量达到 [stepThresholdPx] 且满足最小步进间隔 [minStepIntervalMs] 时触发 ±1 张切图；
+ * - 方向反转立即清零旧方向残留并跳过同向冷却，确保来回微调跟手；
+ * - 停顿超过 [idleResetMs] 自动清零残留累积量。
+ */
+internal class RotaryPageStepper(
+    private val stepThresholdPx: Float = DEFAULT_STEP_THRESHOLD_PX,
+    private val minStepIntervalMs: Long = DEFAULT_MIN_STEP_INTERVAL_MS,
+    private val idleResetMs: Long = DEFAULT_IDLE_RESET_MS
+) {
+    private var accumulatedPx: Float = 0f
+    private var lastEventTimeMs: Long = 0L
+    private var lastStepTimeMs: Long = 0L
+    private var lastStepDirection: Int = 0
+
+    fun onRotaryDelta(deltaPx: Float, nowMs: Long): Int {
+        if (deltaPx == 0f) return 0
+
+        val direction = if (deltaPx > 0f) 1 else -1
+        val reversed = (accumulatedPx > 0f && deltaPx < 0f) || (accumulatedPx < 0f && deltaPx > 0f)
+        val reversedFromLastStep = lastStepDirection != 0 && lastStepDirection != direction
+
+        if (reversed || (lastEventTimeMs > 0L && nowMs - lastEventTimeMs > idleResetMs)) {
+            accumulatedPx = 0f
+        }
+        lastEventTimeMs = nowMs
+        accumulatedPx += deltaPx
+
+        val cooldownSatisfied = reversedFromLastStep ||
+            lastStepTimeMs == 0L ||
+            (nowMs - lastStepTimeMs >= minStepIntervalMs)
+        if (abs(accumulatedPx) >= stepThresholdPx && cooldownSatisfied) {
+            accumulatedPx = 0f
+            lastStepTimeMs = nowMs
+            lastStepDirection = direction
+            return direction
+        }
+        return 0
+    }
+
+    fun reset() {
+        accumulatedPx = 0f
+        lastEventTimeMs = 0L
+        lastStepTimeMs = 0L
+        lastStepDirection = 0
+    }
+
+    companion object {
+        const val DEFAULT_STEP_THRESHOLD_PX = 28f
+        const val DEFAULT_MIN_STEP_INTERVAL_MS = 130L
+        const val DEFAULT_IDLE_RESET_MS = 450L
+    }
+}
+
+/**
  * 全屏多图画廊浏览浮层（基于 Wear M3 Expressive HorizontalPagerScaffold + AnimatedPage）。
  * 1. 未缩放时单指左右滑动顺畅切图，不吞噬 HorizontalPager 手势；双指捏合/双击缩放后单指自由拖动；
- * 2. 支持旋转表冠/表圈按刻度逐张切图，同时锁定底层列表防止误滚；
+ * 2. 支持旋转表冠/表圈按刻度逐张切图（含高分表冠与机械表圈双通道），同时锁定底层列表防止误滚；
  * 3. 长按或点顶部下载按钮可保存原图，单击空白处关闭。
  */
 @Composable
@@ -87,7 +144,9 @@ fun FullscreenImageViewer(
     val safeInitial = initialIndex.coerceIn(0, imageUrls.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeInitial) { imageUrls.size }
     var currentPageZoomed by remember { mutableStateOf(false) }
-    val currentZoomedState by rememberUpdatedState(currentPageZoomed)
+    var pendingTargetPage by remember(safeInitial, imageUrls.size) { mutableIntStateOf(safeInitial) }
+    var scrollAnimJob by remember { mutableStateOf<Job?>(null) }
+    val rotaryStepper = remember(imageUrls.size) { RotaryPageStepper() }
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
@@ -95,33 +154,32 @@ fun FullscreenImageViewer(
 
     BackHandler(onBack = onDismiss)
 
-    // 旋转表冠 / 表圈逐张切图（同时拦截底层列表滚动）
-    val rotaryAccumulator = remember { floatArrayOf(0f) }
-    val rotaryLastEventTime = remember { longArrayOf(0L) }
-    val rotaryLastStepTime = remember { longArrayOf(0L) }
-    val rotaryConsumer: suspend (Float) -> Unit = remember(pagerState, imageUrls.size) {
+    // 旋转表冠 / 表圈逐张切图（非阻塞取消旧动画，同时拦截底层列表滚动）
+    val rotaryConsumer: suspend (Float) -> Unit = remember(pagerState, imageUrls.size, rotaryStepper) {
         { delta ->
-            if (!currentZoomedState && imageUrls.size > 1 && delta != 0f) {
-                val now = System.currentTimeMillis()
-                // 若方向反转或连续转动中断超过 350ms，清零残留累积量
-                if ((delta > 0f && rotaryAccumulator[0] < 0f) ||
-                    (delta < 0f && rotaryAccumulator[0] > 0f) ||
-                    now - rotaryLastEventTime[0] > 350L
-                ) {
-                    rotaryAccumulator[0] = 0f
-                }
-                rotaryLastEventTime[0] = now
-                rotaryAccumulator[0] += delta
-                if (abs(rotaryAccumulator[0]) >= 72f && now - rotaryLastStepTime[0] >= 140L) {
-                    val step = if (rotaryAccumulator[0] > 0f) 1 else -1
-                    rotaryAccumulator[0] = 0f
-                    rotaryLastStepTime[0] = now
-                    val target = (pagerState.currentPage + step).coerceIn(0, imageUrls.lastIndex)
-                    if (target != pagerState.currentPage) {
-                        try {
-                            pagerState.animateScrollToPage(target)
-                        } catch (_: CancellationException) {
-                            pagerState.scrollToPage(target)
+            if (imageUrls.size > 1 && delta != 0f) {
+                val step = rotaryStepper.onRotaryDelta(
+                    deltaPx = delta,
+                    nowMs = SystemClock.uptimeMillis()
+                )
+                if (step != 0) {
+                    val basePage = if (scrollAnimJob?.isActive == true) {
+                        pendingTargetPage
+                    } else {
+                        pagerState.currentPage
+                    }
+                    val target = (basePage + step).coerceIn(0, imageUrls.lastIndex)
+                    if (target != basePage || target != pagerState.currentPage) {
+                        pendingTargetPage = target
+                        currentPageZoomed = false
+                        RotaryDispatcher.triggerTick(context, view)
+                        scrollAnimJob?.cancel()
+                        scrollAnimJob = scope.launch {
+                            try {
+                                pagerState.animateScrollToPage(target)
+                            } catch (_: CancellationException) {
+                                // 被新的表冠切图指令打断时交由新动画接管
+                            }
                         }
                     }
                 }
@@ -132,34 +190,45 @@ fun FullscreenImageViewer(
     DisposableEffect(rotaryConsumer) {
         RotaryDispatcher.push(rotaryConsumer)
         onDispose {
+            scrollAnimJob?.cancel()
+            rotaryStepper.reset()
             RotaryDispatcher.remove(rotaryConsumer)
         }
     }
 
-    LaunchedEffect(Unit) {
-        delay(80)
+    // 切页或首次打开时重新抢占表冠焦点，确保 Compose onRotaryScrollEvent 持续生效
+    LaunchedEffect(pagerState.currentPage) {
+        currentPageZoomed = false
+        if (!pagerState.isScrollInProgress) {
+            pendingTargetPage = pagerState.currentPage
+        }
+        delay(60)
         runCatching { focusRequester.requestFocus() }
     }
 
-    // 切页后重置缩放锁状态
-    LaunchedEffect(pagerState.currentPage) {
-        currentPageZoomed = false
+    LaunchedEffect(pagerState.isScrollInProgress, pagerState.settledPage) {
+        if (!pagerState.isScrollInProgress) {
+            pendingTargetPage = pagerState.currentPage
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .focusRequester(focusRequester)
-            .focusable()
             .onRotaryScrollEvent { event ->
-                val delta = event.verticalScrollPixels
+                val delta = if (event.verticalScrollPixels != 0f) {
+                    event.verticalScrollPixels
+                } else {
+                    event.horizontalScrollPixels
+                }
                 if (delta != 0f && RotaryDispatcher.tryClaimEvent(event.uptimeMillis)) {
-                    RotaryDispatcher.triggerTick(context, view)
                     RotaryDispatcher.dispatchScroll(scope, delta)
                 }
                 true
             }
+            .focusRequester(focusRequester)
+            .focusable()
     ) {
         HorizontalPagerScaffold(pagerState = pagerState) {
             HorizontalPager(
@@ -180,6 +249,7 @@ fun FullscreenImageViewer(
                     ScreenScaffold(timeText = {}) {
                         ZoomableImagePage(
                             imageUrl = imageUrl,
+                            isCurrentPage = pagerState.currentPage == page,
                             onZoomChanged = { zoomed ->
                                 if (pagerState.currentPage == page) {
                                     currentPageZoomed = zoomed
@@ -252,6 +322,7 @@ fun FullscreenImageViewer(
 @Composable
 private fun ZoomableImagePage(
     imageUrl: String,
+    isCurrentPage: Boolean,
     onZoomChanged: (Boolean) -> Unit,
     onTapClose: () -> Unit,
     onRequestSave: () -> Unit
@@ -259,6 +330,13 @@ private fun ZoomableImagePage(
     var scale by remember(imageUrl) { mutableFloatStateOf(1f) }
     var offset by remember(imageUrl) { mutableStateOf(Offset.Zero) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    LaunchedEffect(isCurrentPage) {
+        if (!isCurrentPage && (scale > 1.01f || offset != Offset.Zero)) {
+            scale = 1f
+            offset = Offset.Zero
+        }
+    }
 
     LaunchedEffect(scale) {
         onZoomChanged(scale > 1.05f)

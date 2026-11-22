@@ -8,7 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,6 +72,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import coil.compose.AsyncImage
 import com.coolapk.wear.presentation.components.FeedCard
+import com.coolapk.wear.presentation.components.FullBleedHorizontalScrollRow
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.UserRowCard
@@ -212,13 +212,12 @@ fun SearchScreen(
                     }
                 }
 
-                // 5 分类 Tab（动态 / 作者 / 话题 / 数码 / 应用）
+                // 5 分类 Tab（动态 / 作者 / 话题 / 数码 / 应用，铺满表盘左右边缘）
                 item(key = "search_tabs") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(tabScroll)
-                            .padding(vertical = 2.dp),
+                    FullBleedHorizontalScrollRow(
+                        scrollState = tabScroll,
+                        contentPadding = contentPadding,
+                        modifier = Modifier.padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         SearchTab.entries.forEach { tab ->
@@ -246,10 +245,9 @@ fun SearchScreen(
                 // 动态搜索排序条
                 if (uiState.hasSearched && uiState.currentTab == SearchTab.FEEDS) {
                     item(key = "search_feed_sort") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(sortScroll),
+                        FullBleedHorizontalScrollRow(
+                            scrollState = sortScroll,
+                            contentPadding = contentPadding,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             SearchFeedSort.entries.forEach { sort ->

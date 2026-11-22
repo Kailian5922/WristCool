@@ -3,7 +3,6 @@ package com.coolapk.wear.presentation.inbox
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +50,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.coolapk.wear.data.model.MessageSession
 import com.coolapk.wear.data.model.NotificationItem
+import com.coolapk.wear.presentation.components.FullBleedHorizontalScrollRow
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.UserAvatar
@@ -157,15 +157,13 @@ fun InboxScreen(
                     return@TransformingLazyColumn
                 }
 
-                // 6 分类切换条（私信 / 评论 / @我 / 评论@ / 赞我 / 新粉丝）
+                // 6 分类切换条（私信 / 评论 / @我 / 评论@ / 赞我 / 新粉丝，铺满表盘左右边缘）
                 item(key = "inbox_tabs") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(tabScroll)
-                            .padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    FullBleedHorizontalScrollRow(
+                        scrollState = tabScroll,
+                        contentPadding = contentPadding,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         InboxTab.entries.forEach { tab ->
                             val isSelected = uiState.currentTab == tab

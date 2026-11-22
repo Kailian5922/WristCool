@@ -196,15 +196,20 @@ fun Modifier.rotaryEventHandler(
 
     return if (enabled) {
         this
-            .focusRequester(focusRequester)
-            .focusable()
             .onRotaryScrollEvent { event ->
-                if (RotaryDispatcher.tryClaimEvent(event.uptimeMillis)) {
+                val delta = if (event.verticalScrollPixels != 0f) {
+                    event.verticalScrollPixels
+                } else {
+                    event.horizontalScrollPixels
+                }
+                if (delta != 0f && RotaryDispatcher.tryClaimEvent(event.uptimeMillis)) {
                     RotaryDispatcher.triggerTick(context, view)
-                    RotaryDispatcher.dispatchScroll(coroutineScope, event.verticalScrollPixels)
+                    RotaryDispatcher.dispatchScroll(coroutineScope, delta)
                 }
                 true
             }
+            .focusRequester(focusRequester)
+            .focusable()
     } else {
         this
     }
@@ -241,15 +246,20 @@ fun Modifier.rotaryEventHandler(
 
     return if (enabled) {
         this
-            .focusRequester(focusRequester)
-            .focusable()
             .onRotaryScrollEvent { event ->
-                if (RotaryDispatcher.tryClaimEvent(event.uptimeMillis)) {
+                val delta = if (event.verticalScrollPixels != 0f) {
+                    event.verticalScrollPixels
+                } else {
+                    event.horizontalScrollPixels
+                }
+                if (delta != 0f && RotaryDispatcher.tryClaimEvent(event.uptimeMillis)) {
                     RotaryDispatcher.triggerTick(context, view)
-                    RotaryDispatcher.dispatchScroll(coroutineScope, event.verticalScrollPixels)
+                    RotaryDispatcher.dispatchScroll(coroutineScope, delta)
                 }
                 true
             }
+            .focusRequester(focusRequester)
+            .focusable()
     } else {
         this
     }

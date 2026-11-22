@@ -9,19 +9,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -36,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,6 +57,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
+import com.coolapk.wear.presentation.components.FullBleedHorizontalScrollRow
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.rotaryEventHandler
@@ -226,74 +227,47 @@ fun ReplyOverlay(
                 }
 
                 item(key = "composer_input") {
-                    Column(
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .transformedHeight(this, transformationSpec)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(colorScheme.surfaceContainer)
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
                     ) {
-                        Box(
+                        BasicTextField(
+                            value = replyText,
+                            onValueChange = onReplyTextChange,
+                            textStyle = TextStyle(color = colorScheme.onSurface, fontSize = 12.sp),
+                            cursorBrush = SolidColor(colorScheme.primary),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.large)
-                                .background(colorScheme.surfaceContainer)
-                                .padding(10.dp)
-                        ) {
-                            BasicTextField(
-                                value = replyText,
-                                onValueChange = onReplyTextChange,
-                                textStyle = TextStyle(color = colorScheme.onSurface, fontSize = 12.sp),
-                                cursorBrush = SolidColor(colorScheme.primary),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(52.dp),
-                                decorationBox = { innerTextField ->
+                                .weight(1f)
+                                .heightIn(min = 36.dp),
+                            decorationBox = { innerTextField ->
+                                Box(contentAlignment = Alignment.CenterStart) {
                                     if (replyText.isEmpty()) {
                                         Text(
-                                            text = "点击输入或使用下方语音…",
+                                            text = "点击输入或点右侧语音…",
                                             color = colorScheme.onSurfaceVariant,
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                     }
                                     innerTextField()
                                 }
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 酷安表情标签快捷栏
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .horizontalScroll(emojiScrollState),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                coolapkEmojis.forEach { tag ->
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(colorScheme.surfaceContainerHigh)
-                                            .clickable { onReplyTextChange("$replyText$tag") }
-                                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = tag,
-                                            color = colorScheme.onSurface,
-                                            style = MaterialTheme.typography.bodyExtraSmall
-                                        )
-                                    }
-                                }
                             }
+                        )
 
-                            Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
 
-                            FilledTonalIconButton(
-                                onClick = {
+                        // 紧凑型 28dp 语音输入按钮（与左侧文字字号匹配，避免 FilledTonalIconButton 48dp 最小点击框撑大失调）
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(colorScheme.surfaceContainerHigh)
+                                .clickable(role = Role.Button) {
                                     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                         putExtra(
                                             RecognizerIntent.EXTRA_LANGUAGE_MODEL,
@@ -306,15 +280,38 @@ fun ReplyOverlay(
                                     } catch (_: Exception) {
                                         Toast.makeText(context, "未找到语音输入服务", Toast.LENGTH_SHORT).show()
                                     }
-                                },
-                                shapes = IconButtonDefaults.animatedShapes(),
-                                modifier = Modifier.size(IconButtonDefaults.SmallButtonSize)
+                                }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Mic,
+                                contentDescription = "语音输入",
+                                tint = colorScheme.primary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 酷安表情标签快捷栏（独立满宽铺边，消除左右截断黑边）
+                item(key = "composer_emojis") {
+                    FullBleedHorizontalScrollRow(
+                        scrollState = emojiScrollState,
+                        contentPadding = contentPadding,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        coolapkEmojis.forEach { tag ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(colorScheme.surfaceContainerHigh)
+                                    .clickable { onReplyTextChange("$replyText$tag") }
+                                    .padding(horizontal = 7.dp, vertical = 4.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Mic,
-                                    contentDescription = "语音输入",
-                                    tint = colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
+                                Text(
+                                    text = tag,
+                                    color = colorScheme.onSurface,
+                                    style = MaterialTheme.typography.bodyExtraSmall
                                 )
                             }
                         }

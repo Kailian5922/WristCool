@@ -1,15 +1,18 @@
 package com.coolapk.wear.presentation.detail
 
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
@@ -48,8 +52,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,16 +66,11 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.FilledTonalButton
-import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButtonDefaults
-import androidx.wear.compose.material3.IconToggleButton
-import androidx.wear.compose.material3.IconToggleButtonDefaults
 import androidx.wear.compose.material3.LinearProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
@@ -81,6 +84,7 @@ import com.coolapk.wear.data.util.ImageSaver
 import com.coolapk.wear.data.util.TextSanitizer
 import com.coolapk.wear.presentation.components.CommentCard
 import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
+import com.coolapk.wear.presentation.components.FullBleedHorizontalScrollRow
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.LoadMoreEffect
 import com.coolapk.wear.presentation.components.SubReplyUiState
@@ -125,7 +129,6 @@ fun FeedDetailScreen(
     var galleryState by remember { mutableStateOf<GalleryViewerState?>(null) }
     var pendingDownloadImageUrl by remember { mutableStateOf<String?>(null) }
     var activeReplyTarget by remember { mutableStateOf<ReplyTarget?>(null) }
-    var showForwardOverlay by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
     var showDeleteFeedConfirm by remember { mutableStateOf(false) }
     var pendingDeleteComment by remember { mutableStateOf<CommentItem?>(null) }
@@ -135,7 +138,6 @@ fun FeedDetailScreen(
 
     val hasAnyOverlay = galleryState != null ||
         activeReplyTarget != null ||
-        showForwardOverlay ||
         showQrDialog ||
         pendingDownloadImageUrl != null ||
         showDeleteFeedConfirm ||
@@ -539,12 +541,10 @@ fun FeedDetailScreen(
                     if (topicTags.isNotEmpty() || (feed.targetProductId.isNotBlank() && feed.targetProductName.isNotBlank())) {
                         item(key = "detail_tags") {
                             val tagScroll = rememberScrollState()
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(tagScroll),
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            FullBleedHorizontalScrollRow(
+                                scrollState = tagScroll,
+                                contentPadding = contentPadding,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 if (feed.targetProductId.isNotBlank() && feed.targetProductName.isNotBlank()) {
                                     Row(
@@ -596,99 +596,27 @@ fun FeedDetailScreen(
                         }
                     }
 
-                    // Material 3 Expressive 形状变形操作栏（点赞 / 收藏 / 转发 / 手机扫码）
+                    // 统一大胶囊操作栏（点赞 / 收藏 / 评论 / 手机扫码，点亮时对应区域使用主题高亮色）
                     item(key = "detail_action_group") {
                         Column(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .transformedHeight(this, transformationSpec)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            val likeInteraction = remember { MutableInteractionSource() }
-                            val favInteraction = remember { MutableInteractionSource() }
-                            val forwardInteraction = remember { MutableInteractionSource() }
-                            val qrInteraction = remember { MutableInteractionSource() }
-
-                            ButtonGroup(modifier = Modifier.fillMaxWidth()) {
-                                IconToggleButton(
-                                    checked = uiState.isLiked,
-                                    enabled = !uiState.isTogglingLike,
-                                    onCheckedChange = { viewModel.toggleLike() },
-                                    interactionSource = likeInteraction,
-                                    shapes = IconToggleButtonDefaults.variantAnimatedShapes(),
-                                    colors = IconToggleButtonDefaults.colors(
-                                        checkedContainerColor = colorScheme.errorContainer,
-                                        checkedContentColor = colorScheme.onErrorContainer,
-                                        uncheckedContainerColor = colorScheme.surfaceContainerHigh,
-                                        uncheckedContentColor = colorScheme.onSurface
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .animateWidth(likeInteraction)
-                                ) {
-                                    Icon(
-                                        imageVector = if (uiState.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                        contentDescription = "赞",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconToggleButton(
-                                    checked = uiState.isFavorite,
-                                    enabled = !uiState.isTogglingFavorite,
-                                    onCheckedChange = { viewModel.toggleFavorite() },
-                                    interactionSource = favInteraction,
-                                    shapes = IconToggleButtonDefaults.variantAnimatedShapes(),
-                                    colors = IconToggleButtonDefaults.colors(
-                                        checkedContainerColor = colorScheme.tertiaryContainer,
-                                        checkedContentColor = colorScheme.onTertiaryContainer,
-                                        uncheckedContainerColor = colorScheme.surfaceContainerHigh,
-                                        uncheckedContentColor = colorScheme.onSurface
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .animateWidth(favInteraction)
-                                ) {
-                                    Icon(
-                                        imageVector = if (uiState.isFavorite) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                                        contentDescription = "收藏",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                FilledTonalIconButton(
-                                    onClick = {
-                                        composerText = ""
-                                        showForwardOverlay = true
-                                    },
-                                    interactionSource = forwardInteraction,
-                                    shapes = IconButtonDefaults.animatedShapes(),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .animateWidth(forwardInteraction)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Repeat,
-                                        contentDescription = "转发",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                FilledTonalIconButton(
-                                    onClick = { showQrDialog = true },
-                                    interactionSource = qrInteraction,
-                                    shapes = IconButtonDefaults.animatedShapes(),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .animateWidth(qrInteraction)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.QrCode2,
-                                        contentDescription = "手机扫码查看",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
+                            FeedDetailActionCapsule(
+                                isLiked = uiState.isLiked,
+                                isTogglingLike = uiState.isTogglingLike,
+                                onToggleLike = { viewModel.toggleLike() },
+                                isFavorite = uiState.isFavorite,
+                                isTogglingFavorite = uiState.isTogglingFavorite,
+                                onToggleFavorite = { viewModel.toggleFavorite() },
+                                isCommentActive = activeReplyTarget != null && activeReplyTarget?.replyId == null,
+                                onCommentClick = {
+                                    composerText = ""
+                                    activeReplyTarget = ReplyTarget()
+                                },
+                                isQrActive = showQrDialog,
+                                onQrClick = { showQrDialog = true }
+                            )
 
                             // 互动统计摘要 + 管理操作（删除自己的动态 / 屏蔽作者）
                             Row(
@@ -754,13 +682,11 @@ fun FeedDetailScreen(
                     // 评论排序条
                     item(key = "detail_comment_sort") {
                         val sortScrollState = rememberScrollState()
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(sortScrollState)
-                                .padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        FullBleedHorizontalScrollRow(
+                            scrollState = sortScrollState,
+                            contentPadding = contentPadding,
+                            modifier = Modifier.padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             CommentSort.entries.forEach { sort ->
                                 val isSelected = uiState.commentSort == sort
@@ -1007,26 +933,6 @@ fun FeedDetailScreen(
             )
         }
 
-        // 转发动态浮层
-        if (showForwardOverlay) {
-            ReplyOverlay(
-                mode = ComposerMode.FORWARD_FEED,
-                replyText = composerText,
-                onReplyTextChange = { composerText = it },
-                isSubmitting = uiState.isForwarding,
-                onSubmit = {
-                    viewModel.forwardFeed(composerText) { ok, msg ->
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        if (ok) {
-                            showForwardOverlay = false
-                            composerText = ""
-                        }
-                    }
-                },
-                onDismiss = { showForwardOverlay = false }
-            )
-        }
-
         // 手机扫码查看浮层
         val qrFeedId = uiState.feed?.id?.ifBlank { viewModel.feedId } ?: viewModel.feedId
         if (showQrDialog && qrFeedId.isNotBlank()) {
@@ -1035,6 +941,206 @@ fun FeedDetailScreen(
                 onDismiss = { showQrDialog = false }
             )
         }
+    }
+}
+
+private val ActionCapsuleHeight = 44.dp
+private val ActionCapsuleOuterRadius = 22.dp
+private val ActionCapsuleInnerCornerRadius = 12.dp
+
+/**
+ * 帖子详情页统一大胶囊四键操作栏（点赞 / 收藏 / 评论 / 手机扫码）：
+ * - 外层由一颗完整的圆角胶囊包裹，消除窄屏下独立 `ButtonGroup` 按钮被竖向拉伸变形的问题；
+ * - 左右两端区域贴合外胶囊的半圆圆角高亮，中间两块采用平滑圆角矩形高亮；
+ * - 统一使用当前主题的主高亮色（`primary` / `onPrimary`）点亮激活或按压区域。
+ */
+@Composable
+private fun FeedDetailActionCapsule(
+    isLiked: Boolean,
+    isTogglingLike: Boolean,
+    onToggleLike: () -> Unit,
+    isFavorite: Boolean,
+    isTogglingFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    isCommentActive: Boolean,
+    onCommentClick: () -> Unit,
+    isQrActive: Boolean,
+    onQrClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val likeInteraction = remember { MutableInteractionSource() }
+    val favInteraction = remember { MutableInteractionSource() }
+    val commentInteraction = remember { MutableInteractionSource() }
+    val qrInteraction = remember { MutableInteractionSource() }
+
+    val likePressed by likeInteraction.collectIsPressedAsState()
+    val favPressed by favInteraction.collectIsPressedAsState()
+    val commentPressed by commentInteraction.collectIsPressedAsState()
+    val qrPressed by qrInteraction.collectIsPressedAsState()
+
+    val likeLit = isLiked || likePressed
+    val favLit = isFavorite || favPressed
+    val commentLit = isCommentActive || commentPressed
+    val qrLit = isQrActive || qrPressed
+
+    val startSegmentShape = remember {
+        RoundedCornerShape(
+            topStart = ActionCapsuleOuterRadius,
+            bottomStart = ActionCapsuleOuterRadius,
+            topEnd = ActionCapsuleInnerCornerRadius,
+            bottomEnd = ActionCapsuleInnerCornerRadius
+        )
+    }
+    val middleSegmentShape = remember {
+        RoundedCornerShape(ActionCapsuleInnerCornerRadius)
+    }
+    val endSegmentShape = remember {
+        RoundedCornerShape(
+            topStart = ActionCapsuleInnerCornerRadius,
+            bottomStart = ActionCapsuleInnerCornerRadius,
+            topEnd = ActionCapsuleOuterRadius,
+            bottomEnd = ActionCapsuleOuterRadius
+        )
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(ActionCapsuleHeight)
+            .clip(CircleShape)
+            .background(colorScheme.surfaceContainerHigh)
+    ) {
+        ActionCapsuleSegment(
+            icon = if (isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+            contentDescription = "点赞",
+            isHighlighted = likeLit,
+            enabled = !isTogglingLike,
+            shape = startSegmentShape,
+            interactionSource = likeInteraction,
+            onClick = onToggleLike,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+
+        ActionCapsuleDivider(visible = !likeLit && !favLit)
+
+        ActionCapsuleSegment(
+            icon = if (isFavorite) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+            contentDescription = "收藏",
+            isHighlighted = favLit,
+            enabled = !isTogglingFavorite,
+            shape = middleSegmentShape,
+            interactionSource = favInteraction,
+            onClick = onToggleFavorite,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+
+        ActionCapsuleDivider(visible = !favLit && !commentLit)
+
+        ActionCapsuleSegment(
+            icon = if (commentLit) Icons.Rounded.ChatBubble else Icons.Rounded.ChatBubbleOutline,
+            contentDescription = "评论",
+            isHighlighted = commentLit,
+            enabled = true,
+            shape = middleSegmentShape,
+            interactionSource = commentInteraction,
+            onClick = onCommentClick,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+
+        ActionCapsuleDivider(visible = !commentLit && !qrLit)
+
+        ActionCapsuleSegment(
+            icon = Icons.Rounded.QrCode2,
+            contentDescription = "手机扫码查看",
+            isHighlighted = qrLit,
+            enabled = true,
+            shape = endSegmentShape,
+            interactionSource = qrInteraction,
+            onClick = onQrClick,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+    }
+}
+
+@Composable
+private fun ActionCapsuleSegment(
+    icon: ImageVector,
+    contentDescription: String,
+    isHighlighted: Boolean,
+    enabled: Boolean,
+    shape: Shape,
+    interactionSource: MutableInteractionSource,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val containerColor by animateColorAsState(
+        targetValue = if (isHighlighted) colorScheme.primary else Color.Transparent,
+        animationSpec = tween(durationMillis = 160),
+        label = "action_segment_bg"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            isHighlighted -> colorScheme.onPrimary
+            enabled -> colorScheme.onSurface
+            else -> colorScheme.onSurface.copy(alpha = 0.55f)
+        },
+        animationSpec = tween(durationMillis = 160),
+        label = "action_segment_fg"
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .clip(shape)
+            .background(containerColor)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            )
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = contentColor,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun ActionCapsuleDivider(visible: Boolean) {
+    val colorScheme = MaterialTheme.colorScheme
+    val dividerColor by animateColorAsState(
+        targetValue = if (visible) colorScheme.outlineVariant.copy(alpha = 0.45f) else Color.Transparent,
+        animationSpec = tween(durationMillis = 140),
+        label = "action_capsule_divider"
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .width(2.dp)
+            .fillMaxHeight()
+    ) {
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(16.dp)
+                .background(dividerColor)
+        )
     }
 }
 
