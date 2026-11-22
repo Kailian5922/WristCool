@@ -22,13 +22,13 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.rounded.Bookmark
-import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,54 +39,60 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.CircularProgressIndicator
-import androidx.wear.compose.material.CompactChip
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.FilledTonalButton
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.SurfaceTransformation
+import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.coolapk.wear.BuildConfig
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
 import com.coolapk.wear.presentation.components.HorologistScaffold
 import com.coolapk.wear.presentation.components.RotaryScrollLock
 import com.coolapk.wear.presentation.components.UserAvatar
-import com.coolapk.wear.presentation.components.WearListContentPadding
+import com.coolapk.wear.presentation.components.WearConfirmDialog
+import com.coolapk.wear.presentation.components.WearPillBadge
+import com.coolapk.wear.presentation.components.WearScreenHeader
+import com.coolapk.wear.presentation.components.WearSectionSubHeader
 import com.coolapk.wear.presentation.components.rotaryEventHandler
-import com.coolapk.wear.presentation.theme.LocalAppOnPrimaryColor
-import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
-import com.coolapk.wear.presentation.theme.ThemeManager
-import com.coolapk.wear.presentation.theme.WearSurface
-import com.coolapk.wear.presentation.theme.WearSurfaceVariant
 
 @Composable
 fun MeScreen(
     viewModel: MeViewModel,
-    onFavoritesClick: () -> Unit,
+    isActivePage: Boolean = true,
+    onFavoritesClick: () -> Unit = {},
+    onCollectionsClick: (uid: String) -> Unit = {},
+    onMyLikesClick: (uid: String) -> Unit = {},
+    onMyRepliesClick: (uid: String) -> Unit = {},
     onHistoryClick: () -> Unit,
+    onSettingsClick: () -> Unit = {},
     onUserClick: (String) -> Unit,
     onFollowClick: (String) -> Unit = {},
     onFansClick: (String) -> Unit = {},
     onBack: () -> Unit
 ) {
-    val primaryColor = LocalAppPrimaryColor.current
-    val onPrimaryColor = LocalAppOnPrimaryColor.current
+    val colorScheme = MaterialTheme.colorScheme
     val uiState by viewModel.uiState.collectAsState()
-    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0, initialCenterItemScrollOffset = 0)
+    val listState = rememberTransformingLazyColumnState()
+    val transformationSpec = rememberTransformationSpec()
     val context = LocalContext.current
+
     var isManualInputOpen by remember { mutableStateOf(false) }
     var manualInputText by remember { mutableStateOf("") }
+    var showLogoutDialog by remember { mutableStateOf(false) }
 
-    // 统一弹出导入、清理缓存、退出登录等反馈消息
     LaunchedEffect(uiState.message) {
         val msg = uiState.message
         if (!msg.isNullOrBlank()) {
@@ -103,60 +109,54 @@ fun MeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
+                    .padding(18.dp)
             ) {
                 Text(
                     text = "粘贴或输入凭据",
-                    color = primaryColor,
-                    fontSize = 12.sp,
+                    color = colorScheme.primary,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-
                 Spacer(modifier = Modifier.height(8.dp))
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(WearSurface)
-                        .padding(8.dp)
+                        .clip(MaterialTheme.shapes.large)
+                        .background(colorScheme.surfaceContainer)
+                        .padding(10.dp)
                 ) {
                     if (manualInputText.isEmpty()) {
                         Text(
-                            text = "点击此处唤起输入法粘贴",
-                            color = Color(0xFF666666),
-                            fontSize = 11.sp
+                            text = "点击粘贴伴侣凭据、Cookie 或数盟设备 ID (DU...)",
+                            color = colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyExtraSmall
                         )
                     }
                     BasicTextField(
                         value = manualInputText,
                         onValueChange = { manualInputText = it },
-                        textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
-                        cursorBrush = SolidColor(primaryColor),
+                        textStyle = TextStyle(color = colorScheme.onSurface, fontSize = 11.sp),
+                        cursorBrush = SolidColor(colorScheme.primary),
                         modifier = Modifier.fillMaxSize()
                     )
                 }
-
                 Spacer(modifier = Modifier.height(8.dp))
-
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    CompactChip(
+                    FilledTonalButton(
                         onClick = { isManualInputOpen = false },
-                        label = { Text("取消", fontSize = 11.sp) },
-                        colors = ChipDefaults.chipColors(backgroundColor = WearSurfaceVariant),
+                        label = { Text("取消") },
                         modifier = Modifier.weight(1f)
                     )
-                    CompactChip(
+                    Button(
                         onClick = {
                             viewModel.importFromClipboard(manualInputText)
                             isManualInputOpen = false
                         },
-                        label = { Text("保存", fontSize = 11.sp, color = onPrimaryColor) },
-                        colors = ChipDefaults.chipColors(backgroundColor = primaryColor),
+                        label = { Text("保存") },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -165,215 +165,220 @@ fun MeScreen(
         return
     }
 
-    HorologistScaffold(listState = listState) {
-        ScalingLazyColumn(
-            state = listState,
-            contentPadding = WearListContentPadding,
-            anchorType = ScalingLazyListAnchorType.ItemStart,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryEventHandler(listState)
-        ) {
-            // 顶部个人信息卡片
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(WearSurface)
-                        .padding(10.dp)
-                ) {
-                    if (uiState.credentials.isLoggedIn) {
-                        val profile = uiState.userProfile
-                        val effectiveUid = profile?.uid?.takeIf { it.isNotBlank() } ?: uiState.credentials.uid
-                        val displayName = when {
-                            !profile?.username.isNullOrBlank() -> profile!!.username
-                            uiState.credentials.username.isNotBlank() -> uiState.credentials.username
-                            else -> "酷友"
-                        }
-                        val avatarUrl = when {
-                            !profile?.userAvatar.isNullOrBlank() -> profile!!.userAvatar
-                            uiState.credentials.avatar.isNotBlank() -> uiState.credentials.avatar
-                            else -> ""
-                        }
-                        val bioText = when {
-                            !profile?.bio.isNullOrBlank() -> profile!!.bio
-                            effectiveUid.isNotBlank() -> "UID: $effectiveUid"
-                            else -> "已登录"
-                        }
+    val effectiveUid = uiState.userProfile?.uid?.takeIf { it.isNotBlank() } ?: uiState.credentials.uid
 
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        if (effectiveUid.isNotBlank()) {
-                                            onUserClick(effectiveUid)
+    Box(modifier = Modifier.fillMaxSize()) {
+        HorologistScaffold(scrollState = listState) { contentPadding ->
+            TransformingLazyColumn(
+                state = listState,
+                contentPadding = contentPadding,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .rotaryEventHandler(listState, enabled = isActivePage && !showLogoutDialog)
+            ) {
+                item(key = "me_header") {
+                    WearScreenHeader(title = "个人中心", transformationSpec = transformationSpec)
+                }
+
+                // 个人信息卡片
+                item(key = "me_profile_card") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(colorScheme.surfaceContainer)
+                            .padding(11.dp)
+                    ) {
+                        if (uiState.credentials.isLoggedIn) {
+                            val profile = uiState.userProfile
+                            val displayName = when {
+                                !profile?.username.isNullOrBlank() -> profile!!.username
+                                uiState.credentials.username.isNotBlank() -> uiState.credentials.username
+                                else -> "酷友"
+                            }
+                            val avatarUrl = when {
+                                !profile?.userAvatar.isNullOrBlank() -> profile!!.userAvatar
+                                uiState.credentials.avatar.isNotBlank() -> uiState.credentials.avatar
+                                else -> ""
+                            }
+                            val bioText = when {
+                                !profile?.bio.isNullOrBlank() -> profile!!.bio
+                                effectiveUid.isNotBlank() -> "UID: $effectiveUid"
+                                else -> "已登录"
+                            }
+
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (effectiveUid.isNotBlank()) onUserClick(effectiveUid)
                                         }
-                                    }
-                            ) {
-                                UserAvatar(
-                                    avatarUrl = avatarUrl,
-                                    contentDescription = "头像",
-                                    size = 34.dp
-                                )
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = displayName,
-                                            color = Color.White,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-
-                                        if (profile != null && profile.level > 0) {
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(3.dp))
-                                                    .background(primaryColor.copy(alpha = 0.25f))
-                                                    .padding(horizontal = 3.dp, vertical = 1.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Lv.${profile.level}",
-                                                    color = primaryColor,
-                                                    fontSize = 8.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    maxLines = 1,
-                                                    softWrap = false
-                                                )
+                                ) {
+                                    UserAvatar(
+                                        avatarUrl = avatarUrl,
+                                        contentDescription = displayName,
+                                        size = 34.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = displayName,
+                                                color = colorScheme.onSurface,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            if (profile != null && profile.level > 0) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                WearPillBadge(text = "Lv.${profile.level}")
                                             }
                                         }
+                                        Text(
+                                            text = bioText,
+                                            color = colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodyExtraSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
-
-                                    Text(
-                                        text = bioText,
-                                        color = Color(0xFFA0A0A5),
-                                        fontSize = 10.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
                                 }
-                            }
 
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(WearSurfaceVariant.copy(alpha = 0.5f))
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                ProfileStatCell(
-                                    value = "${profile?.feedNum ?: 0}",
-                                    label = "动态",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(colorScheme.surfaceContainerHigh)
+                                        .padding(vertical = 5.dp),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    ProfileStatCell("${profile?.feedNum ?: 0}", "动态", Modifier.weight(1f)) {
                                         if (effectiveUid.isNotBlank()) onUserClick(effectiveUid)
                                     }
-                                )
-
-                                StatDivider()
-
-                                ProfileStatCell(
-                                    value = "${profile?.followNum ?: 0}",
-                                    label = "关注",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
+                                    ProfileStatCell("${profile?.followNum ?: 0}", "关注", Modifier.weight(1f)) {
                                         if (effectiveUid.isNotBlank()) onFollowClick(effectiveUid)
                                     }
-                                )
-
-                                StatDivider()
-
-                                ProfileStatCell(
-                                    value = "${profile?.fansNum ?: 0}",
-                                    label = "粉丝",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
+                                    ProfileStatCell("${profile?.fansNum ?: 0}", "粉丝", Modifier.weight(1f)) {
                                         if (effectiveUid.isNotBlank()) onFansClick(effectiveUid)
                                     }
-                                )
+                                }
                             }
-                        }
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Rounded.Info,
-                                contentDescription = "未登录",
-                                tint = Color(0xFFA0A0A5),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = "游客模式 (未登录)",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Info,
+                                    contentDescription = "未登录",
+                                    tint = colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
                                 )
-                                Text(
-                                    text = "可通过手机伴侣端导入登录",
-                                    color = Color(0xFFA0A0A5),
-                                    fontSize = 10.sp
-                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "游客模式 (未登录)",
+                                        color = colorScheme.onSurface,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "支持手机伴侣端一键导入凭据",
+                                        color = colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyExtraSmall
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // 功能选项区
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(WearSurface)
-                ) {
-                    if (uiState.credentials.isLoggedIn) {
-                        MeListRow(
-                            icon = Icons.Rounded.Bookmark,
-                            iconTint = Color(0xFFFFB300),
-                            title = "我的收藏",
-                            onClick = onFavoritesClick
+                // 我的内容分区
+                item(key = "me_sec_content") {
+                    WearSectionSubHeader(title = "我的内容", transformationSpec = transformationSpec)
+                }
+
+                if (uiState.credentials.isLoggedIn) {
+                    item(key = "me_collections") {
+                        FilledTonalButton(
+                            onClick = { onCollectionsClick(effectiveUid) },
+                            icon = { Icon(Icons.Rounded.Bookmark, contentDescription = null, tint = colorScheme.tertiary, modifier = Modifier.size(16.dp)) },
+                            label = { Text("我的收藏", maxLines = 1) },
+                            secondaryLabel = { Text("默认收藏夹与全部分类", maxLines = 1) },
+                            transformation = SurfaceTransformation(transformationSpec),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
                         )
-                        MeDivider()
                     }
 
-                    MeListRow(
-                        icon = Icons.Rounded.History,
-                        iconTint = Color(0xFF64B5F6),
-                        title = "浏览历史",
-                        trailingText = "${uiState.historyCount} 条",
-                        onClick = onHistoryClick
-                    )
-                    MeDivider()
+                    item(key = "me_likes") {
+                        FilledTonalButton(
+                            onClick = { onMyLikesClick(effectiveUid) },
+                            icon = { Icon(Icons.Rounded.Favorite, contentDescription = null, tint = colorScheme.error, modifier = Modifier.size(16.dp)) },
+                            label = { Text("我的点赞", maxLines = 1) },
+                            transformation = SurfaceTransformation(transformationSpec),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
+                        )
+                    }
 
-                    MeListRow(
-                        icon = Icons.Rounded.ContentPaste,
-                        iconTint = primaryColor,
-                        title = if (uiState.isImporting) "导入中…" else if (uiState.credentials.isLoggedIn) "同步/刷新伴侣登录" else "导入伴侣登录信息",
-                        trailingText = if (uiState.credentials.isLoggedIn) "已登录" else "未导入",
-                        trailingBadge = if (uiState.isImporting) {
-                            {
-                                CircularProgressIndicator(
-                                    indicatorColor = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
-                        } else {
-                            null
-                        },
+                    item(key = "me_replies") {
+                        FilledTonalButton(
+                            onClick = { onMyRepliesClick(effectiveUid) },
+                            icon = { Icon(Icons.Rounded.ChatBubbleOutline, contentDescription = null, tint = colorScheme.secondary, modifier = Modifier.size(16.dp)) },
+                            label = { Text("我的回复", maxLines = 1) },
+                            transformation = SurfaceTransformation(transformationSpec),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
+                        )
+                    }
+                }
+
+                item(key = "me_history") {
+                    FilledTonalButton(
+                        onClick = onHistoryClick,
+                        icon = { Icon(Icons.Rounded.History, contentDescription = null, tint = colorScheme.tertiary, modifier = Modifier.size(16.dp)) },
+                        label = { Text("浏览历史", maxLines = 1) },
+                        secondaryLabel = { Text("云端优先 · 本地 ${uiState.historyCount} 条", maxLines = 1) },
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
+                    )
+                }
+
+                // 账号与设置分区
+                item(key = "me_sec_account") {
+                    WearSectionSubHeader(title = "账号与手表设置", transformationSpec = transformationSpec)
+                }
+
+                item(key = "me_settings") {
+                    FilledTonalButton(
+                        onClick = onSettingsClick,
+                        icon = { Icon(Icons.Rounded.Settings, contentDescription = null, tint = colorScheme.primary, modifier = Modifier.size(16.dp)) },
+                        label = { Text("手表设置", maxLines = 1) },
+                        secondaryLabel = { Text("主题色 / 省流无图 / 屏蔽管理", maxLines = 1) },
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
+                    )
+                }
+
+                item(key = "me_import_clip") {
+                    FilledTonalButton(
                         onClick = {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                             val text = if (clipboard != null && clipboard.hasPrimaryClip()) {
@@ -382,100 +387,110 @@ fun MeScreen(
                                 ""
                             }
                             viewModel.importFromClipboard(text)
-                        }
+                        },
+                        icon = {
+                            if (uiState.isImporting) {
+                                ExpressiveLoadingIndicator(size = 16.dp, contained = false)
+                            } else {
+                                Icon(Icons.Rounded.ContentPaste, contentDescription = null, tint = colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                        },
+                        label = {
+                            Text(
+                                text = if (uiState.isImporting) "导入中…" else if (uiState.credentials.isLoggedIn) "同步伴侣登录" else "导入伴侣登录",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        secondaryLabel = {
+                            val hasDeviceId = uiState.credentials.deviceId.isNotBlank()
+                            val subtitle = when {
+                                uiState.credentials.isLoggedIn && hasDeviceId -> "已登录 · 设备ID已配置"
+                                uiState.credentials.isLoggedIn -> "已登录 · 未配置设备ID"
+                                hasDeviceId -> "设备ID已配置 · 待导入登录"
+                                else -> "读取剪贴板凭据或设备ID"
+                            }
+                            Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
                     )
-                    MeDivider()
+                }
 
-                    MeListRow(
-                        icon = Icons.Rounded.Edit,
-                        iconTint = Color.White,
-                        title = "键盘手动输入凭据",
+                item(key = "me_manual_input") {
+                    FilledTonalButton(
                         onClick = {
                             manualInputText = ""
                             isManualInputOpen = true
-                        }
-                    )
-                    MeDivider()
-
-                    val useMonet by ThemeManager.useMonet.collectAsState()
-                    MeListRow(
-                        icon = Icons.Rounded.Palette,
-                        iconTint = primaryColor,
-                        title = "动态莫奈取色",
-                        trailingBadge = {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (useMonet) primaryColor else WearSurfaceVariant)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (useMonet) "开启" else "默认绿",
-                                    color = if (useMonet) onPrimaryColor else Color(0xFFA0A0A5),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                         },
-                        onClick = {
-                            val enabled = ThemeManager.toggleMonet(context)
-                            Toast.makeText(
-                                context,
-                                if (enabled) "已开启系统莫奈取色" else "已切换为默认酷安绿",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
+                        icon = { Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        label = { Text("手动输入凭据", maxLines = 1) },
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
                     )
-                    MeDivider()
+                }
 
-                    MeListRow(
-                        icon = Icons.Rounded.CleaningServices,
-                        iconTint = Color(0xFF81C784),
-                        title = "清理图片缓存",
-                        onClick = { viewModel.clearCache(context) }
-                    )
-
-                    if (uiState.credentials.isLoggedIn) {
-                        MeDivider()
-                        MeListRow(
-                            icon = Icons.AutoMirrored.Rounded.ExitToApp,
-                            iconTint = Color(0xFFFF5252),
-                            title = "退出当前登录",
-                            onClick = { viewModel.logout() }
+                if (uiState.credentials.isLoggedIn) {
+                    item(key = "me_logout") {
+                        FilledTonalButton(
+                            onClick = { showLogoutDialog = true },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = colorScheme.errorContainer,
+                                contentColor = colorScheme.onErrorContainer
+                            ),
+                            icon = { Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            label = { Text("退出当前登录", maxLines = 1) },
+                            transformation = SurfaceTransformation(transformationSpec),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .minimumVerticalContentPadding(ButtonDefaults.minimumVerticalListContentPadding)
                         )
                     }
                 }
-            }
 
-            // 关于卡片（动态展示 BuildConfig.VERSION_NAME）
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(WearSurface)
-                        .padding(8.dp)
-                ) {
+                item(key = "me_about") {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
                     ) {
                         Text(
-                            text = "酷安 Wear v${BuildConfig.VERSION_NAME}",
-                            color = Color.White,
-                            fontSize = 11.sp,
+                            text = "腕酷 WristCool v${BuildConfig.VERSION_NAME}",
+                            color = colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Wear OS 原生极简社区体验",
-                            color = Color(0xFF888888),
-                            fontSize = 9.sp
+                            text = "Material 3 Expressive · Wear OS",
+                            color = colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                            style = MaterialTheme.typography.bodyExtraSmall
                         )
                     }
                 }
             }
         }
+
+        WearConfirmDialog(
+            visible = showLogoutDialog,
+            title = "退出登录",
+            message = "确认退出当前酷安账号？",
+            confirmIcon = Icons.AutoMirrored.Rounded.ExitToApp,
+            confirmContentDescription = "确认退出",
+            isDestructive = true,
+            onConfirm = {
+                showLogoutDialog = false
+                viewModel.logout()
+            },
+            onDismiss = { showLogoutDialog = false }
+        )
     }
 }
 
@@ -486,104 +501,24 @@ private fun ProfileStatCell(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val colorScheme = MaterialTheme.colorScheme
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp)
+            .padding(vertical = 3.dp)
     ) {
         Text(
             text = value,
-            color = Color.White,
-            fontSize = 13.sp,
+            color = colorScheme.onSurface,
+            style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold
         )
-        Text(text = label, color = Color(0xFFA0A0A5), fontSize = 9.sp)
-    }
-}
-
-@Composable
-private fun StatDivider() {
-    Box(
-        modifier = Modifier
-            .width(1.dp)
-            .height(18.dp)
-            .background(Color(0xFF3A3A3C))
-    )
-}
-
-@Composable
-private fun MeListRow(
-    icon: ImageVector,
-    iconTint: Color,
-    title: String,
-    subtitle: String? = null,
-    trailingText: String? = null,
-    trailingBadge: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = title,
-            tint = iconTint,
-            modifier = Modifier.size(15.dp)
+        Text(
+            text = label,
+            color = colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyExtraSmall
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    text = subtitle,
-                    color = Color(0xFFA0A0A5),
-                    fontSize = 9.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        if (!trailingText.isNullOrBlank()) {
-            Text(
-                text = trailingText,
-                color = Color(0xFFA0A0A5),
-                fontSize = 10.sp,
-                modifier = Modifier.padding(end = 4.dp)
-            )
-        }
-        if (trailingBadge != null) {
-            trailingBadge()
-        } else {
-            Icon(
-                imageVector = Icons.Rounded.ChevronRight,
-                contentDescription = null,
-                tint = Color(0xFF6E6E73),
-                modifier = Modifier.size(14.dp)
-            )
-        }
     }
-}
-
-@Composable
-private fun MeDivider() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp)
-            .height(0.5.dp)
-            .background(Color(0xFF2C2C2E))
-    )
 }

@@ -14,9 +14,18 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release Version Tag (e.g. v1.1.0)'
+        description: 'Release Version Tag (e.g. v2.0.0-pre.1 or v2.0.0)'
         required: false
         default: ''
+      prerelease:
+        description: 'Mark GitHub Release as Pre-release (auto detects hyphenated tags)'
+        required: false
+        type: choice
+        default: 'auto'
+        options:
+          - 'auto'
+          - 'true'
+          - 'false'
 
 permissions:
   contents: write
@@ -121,12 +130,23 @@ jobs:
           if [[ "$VERSION_TAG" != v* ]]; then
             VERSION_TAG="v${APP_VERSION:-1.1.0}"
           fi
+
+          IS_PRERELEASE="false"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.prerelease }}" == "true" ]]; then
+            IS_PRERELEASE="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.prerelease }}" == "false" ]]; then
+            IS_PRERELEASE="false"
+          elif [[ "$VERSION_TAG" == *-* ]]; then
+            IS_PRERELEASE="true"
+          fi
+
           echo "tag_name=$VERSION_TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
 
           cp app/build/outputs/apk/release/app-release.apk "release_apks/WristCool-wear-${VERSION_TAG}.apk"
           cp phone/build/outputs/apk/release/phone-release.apk "release_apks/WristCool-phone-companion-${VERSION_TAG}.apk"
 
-          echo "Generated APKs (signed=${{ steps.signing.outputs.signed }}):"
+          echo "Generated APKs (signed=${{ steps.signing.outputs.signed }}, prerelease=$IS_PRERELEASE):"
           ls -lh release_apks/
 
       - name: Upload Artifacts to Workflow Run
@@ -140,14 +160,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.prepare_artifacts.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
           name: WristCool ${{ steps.prepare_artifacts.outputs.tag_name }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.prepare_artifacts.outputs.prerelease == 'true' }}
           generate_release_notes: true
           body: |
             ## WristCool 腕酷版本发布 (${{ steps.prepare_artifacts.outputs.tag_name }})
 
-            专为 Wear OS 智能手表与圆形表盘打造的第三方酷安客户端，包含手表独立端与手机伴侣端。
+            专为 Wear OS 智能手表与圆形表盘打造的第三方酷安客户端，包含手表独立端（Material 3 Expressive）与手机伴侣端。
 
             ### 📦 安装包说明（固定包名）
             - ⌚ **手表端 (`WristCool-wear-${{ steps.prepare_artifacts.outputs.tag_name }}.apk`)**：包名 `com.coolapk.wear`，适用于 Wear OS 3.0+ (API 30+)

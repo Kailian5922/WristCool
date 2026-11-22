@@ -35,4 +35,23 @@ class CoolapkAuthTest {
         assertNotEquals(t1, t2)
         assertNotEquals(t1, t3)
     }
+
+    @Test
+    fun `getAppTokenV2 generates valid v2 bcrypt token matching c001apk-Revived`() {
+        val deviceCode = DeviceProfile.generateOfficialDeviceCode()
+        val auth = CoolapkAuth(deviceCode)
+        val token = auth.getAppTokenV2(nowSec = 1730000000L)
+
+        assertTrue("V2 token must start with v2", token.startsWith("v2"))
+        assertTrue("V2 token should not contain padding '='", !token.contains('='))
+        val decoded = String(Base64.getMimeDecoder().decode(token.removePrefix("v2")), Charsets.UTF_8)
+        assertTrue("Decoded V2 hash must start with \$2y\$10\$", decoded.startsWith("\$2y\$10\$"))
+        assertEquals("BCrypt hash should be 60 chars", 60, decoded.length)
+        // 盐前缀必须完整保留 Base64(timestamp) + '/'
+        val expectedTsB64 = Base64.getEncoder().encodeToString("1730000000".toByteArray()).replace("=", "")
+        assertTrue(decoded.startsWith("\$2y\$10\$$expectedTsB64/"))
+
+        val nextSecondToken = auth.getAppTokenV2(nowSec = 1730000001L)
+        assertNotEquals(token, nextSecondToken)
+    }
 }

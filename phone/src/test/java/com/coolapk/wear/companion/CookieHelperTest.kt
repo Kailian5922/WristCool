@@ -36,5 +36,23 @@ class CookieHelperTest {
         val json = JSONObject(payload)
         assertEquals("uid=99; token=tok==", json.getString("cookie"))
         assertEquals("my-ddid", json.getString("ddid"))
+        assertFalse(json.has("deviceId"))
+    }
+
+    @Test
+    fun `parseShuzilmDeviceId extracts DU id from Coolapk multi-line log and bundles into companion payload`() {
+        val logText = """
+            设备ID: DUSampleDeviceId1234567890abcd
+            AndroidID: 0123456789abcdef
+            UUID: 550e8400-e29b-41d4-a716-446655440000
+        """.trimIndent()
+        assertEquals("DUSampleDeviceId1234567890abcd", CookieHelper.parseShuzilmDeviceId(logText))
+        assertEquals("DUSampleDeviceId1234567890abcd", CookieHelper.parseShuzilmDeviceId("  DUSampleDeviceId1234567890abcd  "))
+        assertEquals("", CookieHelper.parseShuzilmDeviceId("550e8400-e29b-41d4-a716-446655440000"))
+        assertEquals("", CookieHelper.parseShuzilmDeviceId("DU0000000000000000000000"))
+
+        val payload = CookieHelper.buildCompanionPayload("uid=99; token=tok==", "", logText)
+        val json = JSONObject(payload)
+        assertEquals("DUSampleDeviceId1234567890abcd", json.getString("deviceId"))
     }
 }

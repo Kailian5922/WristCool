@@ -44,33 +44,38 @@
 
 ## ✨ 核心特性
 
-### ⌚ 极致圆屏交互适配
-- **Google Horologist 规范**：深度集成 `HorologistScaffold`、`ScalingLazyColumn`，提供防切边的圆屏流线型边缘渐进滚动体验。
-- **物理旋转表圈与触控表冠驱动**：针对三星 Galaxy Watch 4/5/6/7 等设备的旋转表圈（Rotary Input）实现底层硬件级事件拦截，搭配精细的线性马达**阻尼触觉震动反馈**（Haptic Feedback），转动顺滑指哪打哪。
-- **纯黑省电背景**：为智能手表的 OLED 屏幕进行深度黑阶像素调优，低功耗持久续航。
+### ⌚ Wear OS Material 3 Expressive 与 Horologist 圆屏交互
+- **全新 Material 3 Expressive 组件体系**：全面迁移至 `androidx.wear.compose:compose-material3:1.6.2`，引入 `AppScaffold`、`ScreenScaffold`、`TransformingLazyColumn`、`EdgeButton`、`ButtonGroup`、`HorizontalPagerScaffold`、`SwipeToReveal`、`SwitchButton`、`CheckboxButton`、`RadioButton`、`AlertDialog` 与 `MotionScheme.expressive()` 弹性动效。
+- **三页主舞台 + 旋转表圈/表冠驱动**：根部采用 `HorizontalPagerScaffold` 承载 **动态广场｜消息与私信｜个人中心** 3 页滑动切换；针对三星 Galaxy Watch 等设备的旋转表圈实现硬件事件拦截与阻尼触觉反馈（可在设置中按需开关）。
+- **纯黑 OLED 省电美学**：为智能手表 OLED 屏幕调优纯黑底色与高对比色阶，兼顾圆屏边缘防裁切（`fillMaxRectangle`）与续航表现。
 
-### 🎨 Android 12+ 莫奈动态取色 (Material You)
-- 支持智能解析 Wear OS / Android 12+ 系统的 `system_palette` 与 `system_accent1` 强调色。
-- 支持在**经典酷安绿**与**系统莫奈色**之间自适应响应，全局组件（高亮胶囊、Tab 按钮、头像光环等）沉浸融入表盘主题。
+### 🎨 动态取色与 4 套 OLED 主题预设
+- 优先适配 Wear OS 原生 `dynamicColorScheme`（表盘动态取色），同时兼容 Android 12+ / One UI Watch `system_palette` 莫奈回退。
+- 内置 **酷安绿、极客蓝、暮光紫、琥珀橙** 4 套 OLED 专属 Material 3 Expressive 预设配色，可在手表端【设置】中实时切换。
 
-### 💬 完整多维度内容生态
-- **全频道支持**：默认开箱进入“头条”频道，支持热榜、关注（登录状态自动同步）、酷图频道切换与下拉阻尼触感刷新。
-- **全量楼中楼二级回复**：彻底打破传统客户端仅展示前几条折叠回复的局限，点击“共 X 条回复”即可原地展开、分页拉取看完全部楼中楼内容，支持随时收起。
-- **图片与动图增强**：
-  - 多图自适应排版：单图自适应、2/4 图双列对称、3/6/9 图三列紧凑九宫格。
-  - 评论区 GIF 动图原生动态解码播放。
-  - 大图全屏浏览模式：支持双指缩放、双击放大还原、长按保存图片到手表相册。
-- **手机扫码跨屏查看**：在手表上看到精彩的长图文或外链时，点击“在手机上查看（扫码）”，手表端本地即时生成高清二维码，手机扫一扫立即跳转浏览器继续阅读。
+### 💬 完整酷安社区内容与互动能力
+- **7 大频道 + 关注分组**：支持 **头条、推荐、热榜、关注（全部/好友/话题/数码/应用分组）、酷图、数码、二手**，支持下拉阻尼刷新与底部 `EdgeButton` 快速发帖（含私密发布与快捷话题/表情标签）。
+- **长图文、转发与互动投票**：完整解析并渲染长文章分段（文本/插图/分享链接）、转发引用跳转卡片，以及可交互单选/多选投票进度条。
+- **深度评论与楼中楼**：支持评论排序（默认/热门/最新/楼主）、评论点赞/取消点赞、直接回复动态/单条评论/楼中楼、全量楼中楼分页展开，以及删除自己的动态/评论与转发动态。
+- **图片与动图增强**：自适应九宫格、GIF 动图原生播放、全屏多图左右滑动图库（支持双指缩放、双击还原、长按保存），并支持**无图省流模式**（详情按需点开）。
+- **跨屏扫码查看**：支持手表端本地生成高清二维码，手机扫码直达浏览器阅读长文。
 
-### 👤 账号与个人中心
-- **无缝紧凑功能列表**：消除视觉空白间隔，集成“我的收藏”、“浏览历史”、“刷新伴侣登录”与“退出登录”等功能。
-- **个人主页穿透**：点击头像即可直达用户主页，支持查看 Ta 的动态列表、关注列表、粉丝列表与一键关注/取消关注（自身主页自动隐藏关注按钮）。
-- **收藏夹批量管理**：支持长按触发批量多选，轻松一键清理失效或不需要的收藏。
-- **本地历史缓存**：手表端轻量持久化浏览记录，断网离线也能翻阅历史足迹。
+### 📬 消息通知与私信聊天
+- **通知与私信统一收件箱**：顶部聚合未读红点，支持 **私信、评论、@我、评论@、赞我、新粉丝** 6 个分栏，支持左滑 `SwipeToReveal` 删除会话/通知与一键清除未读。
+- **手表端私信对话**：支持查看聊天记录与图片消息、点击底部 `EdgeButton` 语音/键盘快捷回复私信，并在用户主页直达发私信。
+
+### 🔍 5 维搜索、话题与数码产品库
+- **多维度搜索**：支持 **动态（含综合/实时/热度/回复排序）、作者、话题、数码产品、应用** 5 大搜索分栏，集成实时联想、热搜词与本地搜索历史。
+- **话题与数码产品详情**：支持话题简介/排序/关注，以及数码产品评分、价格、配置参数规格、产品关注与关联机主动态流。
+
+### 👤 个人中心、云端资产与屏蔽管理
+- **全量个人功能**：集成 **我的收藏（支持多选批量取消）、云端收藏单、我的点赞、我的回复、双源浏览历史（本地离线 + 酷安云端足迹）**。
+- **用户主页增强**：支持查看用户动态/回复/点赞、关注/粉丝列表、**关注 / 特别关注 / 私信 / 本地屏蔽** 一键操作。
+- **手表设置与本地屏蔽**：支持动态取色、主题预设、无图省流、表圈震动开关、默认启动频道与评论排序、图片缓存清理，以及按用户 UID 与关键词/话题实时过滤动态和评论。
 
 ### 📱 手机伴侣端协同体系 (Phone Companion)
-- **免手动打字导入**：无需在手表极小的键盘上繁琐输入密码，通过配套的手机伴侣端一键完成授权登录并中继同步凭据。
-- **独立离线免登录模式**：即便脱离手机伴侣，手表端亦内置自主设备画像引擎与离线 Token 计算机制，戴上手表即可独立联网游览社区！
+- **免手动打字导入**：通过配套的手机伴侣端一键完成官方网页授权登录并中继同步凭据至手表。
+- **独立离线免登录模式**：内置自主设备画像与 V3 Token 签名引擎，脱离手机伴侣亦可独立浏览社区。
 
 ---
 
@@ -85,27 +90,29 @@ WristCool/
 ├── app/                        # ⌚ 手表端模块 (Wear OS, 包名: com.coolapk.wear)
 │   ├── src/main/java/com/coolapk/wear/
 │   │   ├── WristCoolApplication.kt # 全局应用入口（AppContainer + 单例 Coil ImageLoaderFactory）
-│   │   ├── MainActivity.kt         # 触控表冠防重复拦截与 WearNavigation 路由
+│   │   ├── MainActivity.kt         # 根级 AppScaffold + 3 页 HorizontalPagerScaffold + 全量路由
 │   │   ├── di/AppContainer.kt      # 轻量应用级单例依赖容器
 │   │   ├── data/
 │   │   │   ├── api/
-│   │   │   │   ├── CoolapkApi.kt        # 酷安 REST API 客户端（自动释放连接、业务错误校验）
-│   │   │   │   ├── CoolapkJsonParser.kt # 纯函数 JSON 解析器
+│   │   │   │   ├── CoolapkApi.kt        # 酷安 v16 REST API 客户端（动态/互动/投票/通知/私信/数码/收藏单）
+│   │   │   │   ├── CoolapkJsonParser.kt # 纯函数 JSON 解析器（长图文/转发/投票/通知/私信/产品/应用等）
 │   │   │   │   ├── CoolapkAuth.kt       # 动态 V3 Token 核心加解密签名引擎
 │   │   │   │   └── DeviceProfile.kt     # 线程安全设备画像与拟态请求头
 │   │   │   ├── model/                   # 领域数据模型与有界 LRU 内存缓存
 │   │   │   ├── receiver/                # 伴侣凭据广播实时同步接收器
-│   │   │   ├── repository/              # 凭据存储、浏览历史、动态状态同步总线
+│   │   │   ├── repository/              # 凭据、设置、黑名单屏蔽、搜索/浏览历史与动态状态总线
 │   │   │   └── util/                    # CookieParser、TextSanitizer、ImageSaver、二维码生成
 │   │   └── presentation/
-│   │       ├── components/              # CommonWearComponents、楼中楼卡片、动态卡片、表圈调度与锁
-│   │       ├── detail/                  # 动态详情、九宫格、全屏大图预览、回复与二维码浮层
-│   │       ├── feeds/                   # 频道切换、下拉阻尼刷新列表
-│   │       ├── me/                      # 个人中心、收藏夹多选、浏览历史
-│   │       ├── search/                  # 动态/用户/话题聚合搜索与热搜词
-│   │       ├── topic/ & user/           # 话题流、个人主页与关注/粉丝列表
-│   │       └── theme/                   # 莫奈取色与自适应对比度深色规范
-│   ├── src/test/                        # 核心算法、解析器、API 与 ViewModel 单元测试
+│   │       ├── components/              # M3 Expressive Scaffold/EdgeButton、通用组件、卡片、楼中楼、表圈调度
+│   │       ├── detail/                  # 动态详情、长图文/投票、多图全屏画廊、5 模式回复/发帖浮层、扫码浮层
+│   │       ├── feeds/                   # 7 频道与关注分组广场、快捷发帖、下拉阻尼刷新
+│   │       ├── inbox/                   # 通知/私信收件箱与私信对话页
+│   │       ├── me/                      # 个人中心、收藏多选、收藏单、赞/回复记录、双源历史、设置与屏蔽管理
+│   │       ├── product/                 # 数码产品详情、评分规格与关联动态流
+│   │       ├── search/                  # 5 维聚合搜索、排序、实时联想与搜索历史
+│   │       ├── topic/ & user/           # 话题详情/关注/排序、个人主页（含特关/私信/屏蔽）与关注/粉丝列表
+│   │       └── theme/                   # Material 3 Expressive 动态取色、4 套 OLED 预设与弹性动效
+│   ├── src/test/                        # 算法、解析器、API 契约、屏蔽过滤与 ViewModel 单元测试
 │   └── build.gradle.kts
 └── phone/                      # 📱 手机伴侣端模块 (Android Phone, 包名: com.coolapk.wear.companion)
     ├── src/main/java/com/coolapk/wear/companion/
@@ -120,20 +127,14 @@ WristCool/
 
 ## 📚 开源引用与致谢
 
-在探索与开发 Wear OS 穿戴端交互的过程中，深深受益于开源社区先行者的逆向研究与智慧积累，特此致敬并鸣谢以下优秀的开源项目与技术成果：
+在探索与开发 Wear OS 穿戴端交互的过程中，深深受益于开源社区先行者的研究与设计规范，特此致敬并鸣谢以下优秀的开源项目与技术成果：
 
-1. **[Coolapk-UWP](https://github.com/Tangent-90/Coolapk-UWP)**  
-   致谢项目作者及贡献者在酷安 API 协议逆向、加密 Token 生成算法、数据模型结构梳理方面所做的里程碑式探索，为本项目穿戴端网络层的设计提供了极其宝贵的规范参考。
-2. **[coolApkAPI](https://github.com/ZCKun/CoolApkWeb)**  
-   参考了部分接口参数和响应格式定义。
-3. **[Google Horologist](https://github.com/google/horologist)**  
-   提供了 Wear OS 原生手势滚动、自适应圆形布局与 Wear Compose 最佳设计实践。
-4. **[Coil (Coil-kt)](https://github.com/coil-kt/coil)**  
-   极轻量的 Kotlin 协程图片与 GIF 动图异步加载库，助力手表端极致节省内存。
-5. **[ZXing Core](https://github.com/zxing/zxing)**  
-   为“在手机上查看”功能提供毫秒级、免网络的二维码位图本地生成能力。
-6. **[OkHttp](https://github.com/square/okhttp)**  
-   高效、稳定的底层 HTTP 网络请求与拦截器通道。
+1. **[Google Horologist](https://github.com/google/horologist)**：提供了 Wear OS 圆形屏幕响应式布局、分页壳层、手势滚动与 Wear Compose Material 3 最佳实践参考。
+2. **[c001apk-Revived](https://github.com/Kailian5922/c001apk-Revived)** & **[coolapk-desktop](https://github.com/Kailian5922/coolapk-desktop)**：为酷安 v16 协议扩展（通知/私信/投票/长图文/转发/收藏单/数码产品/话题关注/屏蔽体系等）提供了接口契约与功能实现参考。
+3. **[Coolapk-UWP](https://github.com/Tangent-90/Coolapk-UWP)** & **[coolApkAPI](https://github.com/ZCKun/CoolApkWeb)**：致谢项目作者及贡献者在酷安 API 协议逆向、加密 Token 算法与数据结构梳理方面的早期探索。
+4. **[Coil (Coil-kt)](https://github.com/coil-kt/coil)**：轻量的 Kotlin 协程图片与 GIF 动图异步加载库，助力手表端极致节省内存。
+5. **[ZXing Core](https://github.com/zxing/zxing)**：为“在手机上查看”功能提供毫秒级、免网络的二维码位图本地生成能力。
+6. **[OkHttp](https://github.com/square/okhttp)**：高效、稳定的底层 HTTP 网络请求与拦截器通道。
 
 ---
 
@@ -167,7 +168,7 @@ base64 -w 0 wristcool-release.jks   # macOS 可用: base64 -i wristcool-release.
 配置完成后，每次 GitHub Actions 构建都会自动使用该正式密钥签名并校验固定包名（`com.coolapk.wear` / `com.coolapk.wear.companion`），后续版本可直接覆盖升级，无需卸载重装。
 
 ### 方式三：本地源码构建与测试
-确保本地环境已安装 **JDK 17** 与 Android SDK (API 34)：
+确保本地环境已安装 **JDK 17** 与 Android SDK (API 36)：
 
 ```bash
 # 克隆仓库

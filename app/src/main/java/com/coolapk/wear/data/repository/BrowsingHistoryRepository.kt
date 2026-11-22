@@ -63,6 +63,21 @@ class BrowsingHistoryRepository(context: Context) {
         }
     }
 
+    fun removeItem(feedId: String) {
+        if (feedId.isBlank()) return
+        var snapshot: List<FeedItem> = emptyList()
+        var changed = false
+        _history.update { current ->
+            val filtered = current.filterNot { it.id == feedId }
+            changed = filtered.size != current.size
+            snapshot = filtered
+            filtered
+        }
+        if (changed) {
+            persistAsync(snapshot)
+        }
+    }
+
     fun clearHistory() {
         _history.value = emptyList()
         ioScope.launch {

@@ -4,10 +4,8 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,32 +26,30 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.CircularProgressIndicator
-import androidx.wear.compose.material.CompactButton
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.EdgeButtonSize
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.coolapk.wear.data.util.QrCodeGenerator
-import com.coolapk.wear.presentation.components.WearListContentPadding
+import com.coolapk.wear.presentation.components.ExpressiveLoadingIndicator
+import com.coolapk.wear.presentation.components.HorologistScaffold
+import com.coolapk.wear.presentation.components.WearEdgeActionButton
 import com.coolapk.wear.presentation.components.rotaryEventHandler
-import com.coolapk.wear.presentation.theme.LocalAppPrimaryColor
-import com.coolapk.wear.presentation.theme.WearSurfaceVariant
 
 /**
- * 手机扫码查看二维码浮层。
- * 二维码通过 produceState 在后台线程异步生成，并支持物理返回键关闭。
+ * 手机扫码查看二维码浮层（Wear M3 Expressive + 弧形关闭 EdgeButton）。
  */
 @Composable
 fun QrCodeOverlay(
     feedUrl: String,
+    title: String = "手机扫码查看",
+    subtitle: String = "微信 / 浏览器扫一扫直达原页面",
     onDismiss: () -> Unit
 ) {
-    val primaryColor = LocalAppPrimaryColor.current
-    val qrListState = rememberScalingLazyListState()
+    val colorScheme = MaterialTheme.colorScheme
+    val qrListState = rememberTransformingLazyColumnState()
     val qrBitmap by produceState<Bitmap?>(initialValue = null, key1 = feedUrl) {
         value = QrCodeGenerator.generate(feedUrl, 320)
     }
@@ -63,90 +59,88 @@ fun QrCodeOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.96f))
+            .background(colorScheme.background)
     ) {
-        ScalingLazyColumn(
-            state = qrListState,
-            contentPadding = WearListContentPadding,
-            anchorType = ScalingLazyListAnchorType.ItemStart,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryEventHandler(qrListState)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        HorologistScaffold(
+            scrollState = qrListState,
+            showTimeText = false,
+            edgeButton = {
+                WearEdgeActionButton(
+                    scrollState = qrListState,
+                    buttonSize = EdgeButtonSize.ExtraSmall,
+                    onClick = onDismiss
                 ) {
-                    Text(
-                        text = "手机扫码查看",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "关闭",
+                        modifier = Modifier.size(16.dp)
                     )
-                    CompactButton(
-                        onClick = onDismiss,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = WearSurfaceVariant),
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "关闭",
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
                 }
             }
+        ) { contentPadding ->
+            TransformingLazyColumn(
+                state = qrListState,
+                contentPadding = contentPadding,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .rotaryEventHandler(qrListState)
+            ) {
+                item(key = "qr_title") {
+                    Text(
+                        text = title,
+                        color = colorScheme.onSurface,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
-            item {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp)
-                ) {
-                    Box(
+                item(key = "qr_code_body") {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .size(130.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White)
-                            .padding(6.dp),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
                     ) {
-                        val bitmap = qrBitmap
-                        if (bitmap != null) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "二维码",
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            CircularProgressIndicator(
-                                indicatorColor = primaryColor,
-                                modifier = Modifier.size(24.dp)
-                            )
+                        Box(
+                            modifier = Modifier
+                                .size(134.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White)
+                                .padding(8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val bitmap = qrBitmap
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "二维码",
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                ExpressiveLoadingIndicator(size = 30.dp, contained = false)
+                            }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = subtitle,
+                            color = colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyExtraSmall,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = feedUrl,
+                            color = colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
+                        )
                     }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = "手机微信/浏览器扫一扫\n直接在手机打开该动态",
-                        color = Color(0xFFA0A0A5),
-                        fontSize = 10.sp,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = feedUrl,
-                        color = Color(0xFF666666),
-                        fontSize = 9.sp,
-                        textAlign = TextAlign.Center
-                    )
                 }
             }
         }

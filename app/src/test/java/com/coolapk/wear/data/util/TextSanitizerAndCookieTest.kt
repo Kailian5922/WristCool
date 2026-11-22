@@ -29,6 +29,44 @@ class TextSanitizerAndCookieTest {
     }
 
     @Test
+    fun `toCoolapkThumbnailUrl appends s jpg only for static Coolapk image CDN urls and detects GIFs`() {
+        assertTrue(TextSanitizer.isGifImageUrl("https://image.coolapk.com/feed/a.gif"))
+        assertTrue(TextSanitizer.isGifImageUrl("https://image.coolapk.com/feed/a.GIF?t=1"))
+        assertFalse(TextSanitizer.isGifImageUrl("https://image.coolapk.com/feed/a.jpg"))
+
+        assertEquals(
+            "https://image.coolapk.com/feed/2026/01/a.jpg.s.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("http://image.coolapk.com/feed/2026/01/a.jpg")
+        )
+        assertEquals(
+            "https://pic.coolapk.com/feed/2026/01/b.png.s.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://pic.coolapk.com/feed/2026/01/b.png")
+        )
+        // 已有缩略图后缀不重复拼接
+        assertEquals(
+            "https://image.coolapk.com/feed/a.jpg.s.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://image.coolapk.com/feed/a.jpg.s.jpg")
+        )
+        // GIF、头像域、带查询参数 URL、非酷安图床保持原样
+        assertEquals(
+            "https://image.coolapk.com/feed/anim.gif",
+            TextSanitizer.toCoolapkThumbnailUrl("https://image.coolapk.com/feed/anim.gif")
+        )
+        assertEquals(
+            "https://avatar.coolapk.com/data/000/1_avatar_middle.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://avatar.coolapk.com/data/000/1_avatar_middle.jpg")
+        )
+        assertEquals(
+            "https://image.coolapk.com/feed/signed.jpg?sign=abc",
+            TextSanitizer.toCoolapkThumbnailUrl("https://image.coolapk.com/feed/signed.jpg?sign=abc")
+        )
+        assertEquals(
+            "https://example.com/photo.jpg",
+            TextSanitizer.toCoolapkThumbnailUrl("https://example.com/photo.jpg")
+        )
+    }
+
+    @Test
     fun `filterAutoTitle removes placeholder titles and preserves real titles`() {
         assertEquals("", TextSanitizer.filterAutoTitle("张三的动态", "张三"))
         assertEquals("", TextSanitizer.filterAutoTitle("动态", "张三"))
@@ -63,15 +101,36 @@ class TextSanitizerAndCookieTest {
     }
 
     @Test
-    fun `AuthRepository parseCompanionPayload parses JSON and rejects invalid payload`() {
-        val ok = AuthRepository.parseCompanionPayload("""{"cookie":"uid=88; token=xyz==","ddid":"d1"}""")
+    fun `AuthRepository parseCompanionPayload parses JSON with deviceId and rejects invalid payload`() {
+        val ok = AuthRepository.parseCompanionPayload(
+            """{"cookie":"uid=88; token=xyz==","ddid":"d1","deviceId":"DUSampleDeviceId1234567890abcd"}"""
+        )
         assertTrue(ok.isSuccess)
         assertEquals("88", ok.getOrThrow().uid)
         assertEquals("d1", ok.getOrThrow().ddid)
+        assertEquals("DUSampleDeviceId1234567890abcd", ok.getOrThrow().deviceId)
         assertTrue(ok.getOrThrow().isLoggedIn)
 
         val bad = AuthRepository.parseCompanionPayload("""{"cookie":"foo=bar"}""")
         assertTrue(bad.isFailure)
+    }
+
+    @Test
+    fun `DeviceProfile parses official Shuzilm device ID and embeds it into X-App-Device`() {
+        val sampleLog = """
+            设备ID: DUSampleDeviceId1234567890abcd
+            AndroidID: 0123456789abcdef
+            UUID: 550e8400-e29b-41d4-a716-446655440000
+        """.trimIndent()
+        val parsed = com.coolapk.wear.data.api.DeviceProfile.parseShuzilmDeviceId(sampleLog)
+        assertEquals("DUSampleDeviceId1234567890abcd", parsed)
+        assertEquals("", com.coolapk.wear.data.api.DeviceProfile.parseShuzilmDeviceId("550e8400-e29b-41d4-a716-446655440000"))
+
+        val deviceCode = com.coolapk.wear.data.api.DeviceProfile.generateOfficialDeviceCode(parsed)
+        var reversed = deviceCode.reversed()
+        while (reversed.length % 4 != 0) reversed += "="
+        val decoded = String(java.util.Base64.getDecoder().decode(reversed), Charsets.UTF_8)
+        assertTrue("X-App-Device first segment must be parsed DU id", decoded.startsWith("$parsed; "))
     }
 
     @Test
